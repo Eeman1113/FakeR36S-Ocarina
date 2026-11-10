@@ -1,0 +1,11 @@
+# Ship of Harkinian for goodluckOS's App Installer; build.sh fills in the version. Its first start makes the game's
+# assets from the player's own ROM, found in HOME.
+[ENTRY]
+CATEGORY=Games
+NAME=The Legend of Zelda - Ocarina of Time
+DESCRIPTION=Ship of Harkinian, from your own ROM: put it in HOME and open this
+DESCRIPTION_pt-BR=Ship of Harkinian, da sua própria ROM: coloque na HOME e abra aqui
+COMMAND=sh soh.sh
+ICON=icon.png
+SCREENSCRAPER=5395
+VERSION=@VERSION@

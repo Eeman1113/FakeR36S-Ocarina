@@ -1,0 +1,14 @@
+EC7011B7 ntsc_1-0 N64 1.0
+D43DA81F ntsc_1-1 N64 1.1
+693BA2AE ntsc_1-2 N64 1.2
+B044B569 pal_1-0 N64 PAL 1.0
+B2055FBD pal_1-1 N64 PAL 1.1
+F3DD35BA ntsc_u_gc GameCube USA
+F611F4BA ntsc_j_gc GameCube Japan
+F7F52DB8 ntsc_j_gc_collection GameCube Japan, Collector's Edition
+09465AC3 pal_gc GameCube PAL
+F034001A ntsc_u_mq Master Quest USA
+F43B45BA ntsc_j_mq Master Quest Japan
+1D4136F3 pal_mq Master Quest PAL
+871E1C92 pal_gc_dbg GameCube PAL debug
+917D18F6 pal_mq_dbg Master Quest PAL debug

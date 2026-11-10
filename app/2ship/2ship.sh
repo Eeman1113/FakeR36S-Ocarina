@@ -1,20 +1,8 @@
 #!/bin/sh
-# 2 Ship 2 Harkinian (Majora's Mask) with the GLES2 renderer. Saves and settings stay in this folder.
-# Log: HOME/logs/2ship.log. Overrides go in <port>/env, one VAR=value per line.
-dir=$(cd "$(dirname "$0")" && pwd)
-log=/home/player/logs/2ship.log
-mkdir -p /home/player/logs
-
-export LD_LIBRARY_PATH=$dir/libs
-export SHIP_HOME=$dir
-# First run: the cartridge's look at 480p (bilinear, the authentic boot logo)
-[ -f "$dir/2ship2harkinian.json" ] || cp "$dir/defaults.json" "$dir/2ship2harkinian.json"
-[ -f "$dir/env" ] && { set -a; . "$dir/env"; set +a; }
-
-{
-    date
-    grep -E "MemTotal|MemAvailable|SwapFree|Shmem:" /proc/meminfo
-    cd "$dir" && ./2s2h.elf
-    echo "exit $?"
-    grep -E "MemAvailable|SwapFree" /proc/meminfo
-} > "$log" 2>&1
+# 2 Ship 2 Harkinian (Majora's Mask) with the GLES2 renderer, the App Installer's app: its first start makes the game's
+# assets from the player's ROM (common.sh). Saves and settings in data/. Log: HOME/logs/2ship.log; overrides in data/env.
+PORT=2ship ELF=2s2h.elf TITLE="Majora's Mask" O2RS=mm.o2r CONFIG=2ship2harkinian.json
+KEEP="2ship2harkinian.json imgui.ini saves presets randomizer"
+TAKES="the N64 USA version (1.0) or the GameCube USA one"
+. ./common.sh
+start

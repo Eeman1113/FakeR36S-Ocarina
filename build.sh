@@ -4,6 +4,9 @@
 #   ./build.sh [oot|mm] game      the armhf binary, with the GLES2 renderer (patches/lus)
 #   ./build.sh [oot|mm] libs      the libraries it needs that goodluckOS lacks, into libs/
 #   ./build.sh [oot|mm] pack      launcher and assets/ into the folder, and <port>.tar for HOME/ports
+#   ./build.sh [oot|mm] app       the App Installer's zip, out/<App>-<version>.zip, from out/<port> (game, assets and
+#                                 libs first): no game in it; the player's ROM is extracted on the console, by the game.
+#                                 APP_VERSION: default git describe
 #   ./build.sh [oot|mm] native    the same game for this machine (64-bit), in out/native/<port>
 #   ./build.sh [oot|mm] shot [s]  the binary under qemu-arm on Xvfb (llvmpipe, GLES2), screenshots in out/shots/<port>
 #   ./build.sh [oot|mm]           assets, game, libs and pack
@@ -214,6 +217,56 @@ shot() {
     ls "$shots"
 }
 
+# The App Installer's folder: the game, the port's own o2r, libs, what its extractor reads from assets/ (2ship's xml,
+# soh's Torch yml as one zip, unpacked for the ROM's version only), the setup screen, app/common.sh and app/<port>/
+build_app() {
+    local folder a v bad zip f
+    case $GAME in oot) folder=ShipOfHarkinian ;; mm) folder=2Ship2Harkinian ;; esac
+    a=/repo/out/app/$folder
+    [ -f "$OUT/$(basename $ELF)" ] && [ -d "$OUT/libs" ] || { echo "no out/$PORT: ./build.sh $GAME game, assets and libs first"; exit 1; }
+    rm -rf "$a"
+    mkdir -p "$a/assets" "$a/licenses"
+    cp "$OUT/$(basename $ELF)" "$OUT/$PORT.o2r" "$a/"
+    cp -r "$OUT/libs" "$a/"
+    cp -r "$HERE/app/fonts" "$HERE/app/common.sh" "$HERE/app/$PORT/." "$a/"
+    case $GAME in
+        mm) cp -r "$SRC/mm/assets/extractor/." "$a/assets/"
+            cp -r "$SRC/mm/assets/xml" "$a/assets/" ;;
+        oot) cp "$SRC/soh/assets/yml/config.yml" "$a/assets/"
+            (cd "$SRC/soh/assets/yml" && rm -f "$a/assets-yml.zip" && zip -q -r -9 "$a/assets-yml.zip" . -x config.yml) ;;
+    esac
+    arm-linux-gnueabihf-gcc $ARMFLAGS -O2 -Wall -D_REENTRANT -I/usr/include/SDL2 "$HERE/native/setup.c" -o "$a/setup" \
+        -lSDL2 -lSDL2_ttf
+    arm-linux-gnueabihf-strip "$a/setup"
+
+    cp "$HERE/LICENSE" "$a/licenses/LICENSE.port.txt"
+    cp "$HERE"/licenses/*.txt "$a/licenses/"
+    cp "$SRC/libultraship/LICENSE" "$a/licenses/LICENSE.libultraship.txt"
+    [ ! -f "$SRC/LICENSE" ] || cp "$SRC/LICENSE" "$a/licenses/LICENSE.$PORT.txt"
+    cp "$COMMON/libzip-src/LICENSE" "$a/licenses/LICENSE.libzip.txt"
+    for f in "$a"/libs/*; do
+        f=$(dpkg -S "$(basename "$f")" 2>/dev/null | grep ':armhf:' | head -n 1 | cut -d: -f1)
+        [ -z "$f" ] || cp "/usr/share/doc/$f:armhf/copyright" "$a/licenses/$f.copyright.txt" 2>/dev/null ||
+            cp "/usr/share/doc/$f/copyright" "$a/licenses/$f.copyright.txt"
+    done
+
+    v=${APP_VERSION:-$(git -c safe.directory='*' -C /repo describe --tags --always --dirty)}
+    sed -i "s/@VERSION@/$v/" "$a/app.puppy"
+
+    # what the card (FAT) can't hold: links, names it refuses, names that differ only in case
+    bad=$(cd "${a%/*}" && { find "$folder" -type l; find "$folder" -name '*[\\:*?"<>|]*'; find "$folder" | tr A-Z a-z | sort | uniq -d; })
+    [ -z "$bad" ] || { echo "not for a FAT card:"; echo "$bad"; exit 1; }
+    zip=/repo/out/$folder-$v.zip
+    rm -f "$zip"
+    (cd "${a%/*}" && python3 -c 'import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for root, dirs, files in os.walk(sys.argv[2]):
+        dirs.sort()
+        for f in sorted(files): z.write(os.path.join(root, f))' "$zip" "$folder")
+    echo "== out/${zip##*/}: $(find "$a" -type f | wc -l) files, $(du -sm "$a" | cut -f1) MB unpacked," \
+        "$(($(stat -c %s "$zip") / 1048576)) MB zipped"
+}
+
 source_tree
 case "${1:-all}" in
     assets) assets ;;
@@ -222,6 +275,7 @@ case "${1:-all}" in
     pack) pack ;;
     native) native ;;
     shot) shot "${2:-}" ;;
+    app) build_app ;;
     all) assets; game; libs; pack ;;
-    *) echo "usage: $0 [oot|mm] [assets|game|libs|pack|native|shot [seconds]]" >&2; exit 1 ;;
+    *) echo "usage: $0 [oot|mm] [assets|game|libs|pack|app|native|shot [seconds]]" >&2; exit 1 ;;
 esac
