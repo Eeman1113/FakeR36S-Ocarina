@@ -2,9 +2,9 @@
 """Launcher icons for the Zelda ports in the style of the other covers (Skraper's mix): the screenshot behind,
 a 3D N64 box and a gold cartridge at the bottom left, the logo at the bottom right, transparent, 640x480.
 
-    dev/zelda/cover.py              both games, into dev/out/zelda/covers/<port>.png
+    tools/cover.py              both games, into out/covers/<port>.png
 
-Art comes from libretro-thumbnails (the same covers RetroArch shows) into dev/out/zelda/covers/src. It is the
+Art comes from libretro-thumbnails (the same covers RetroArch shows) into out/covers/src. It is the
 games' own art, so it stays out of git: the port packs icon.png only when this has been run."""
 import os
 import sys

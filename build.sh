@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Ocarina of Time (Ship of Harkinian) and Majora's Mask (2 Ship 2 Harkinian) for HOME/ports, without the games.
-#   dev/zelda/build.sh [oot|mm] assets    the port's o2r, and the game's from the rom in dev/out/zelda/roms/<oot|mm>
-#   dev/zelda/build.sh [oot|mm] game      the armhf binary, with the GLES2 renderer (patches/lus)
-#   dev/zelda/build.sh [oot|mm] libs      the libraries it needs that the console's rootfs lacks, into libs/
-#   dev/zelda/build.sh [oot|mm] pack      launcher, assets/ and icon (dev/zelda/cover.py) into the folder, and <port>.tar for HOME/ports
-#   dev/zelda/build.sh [oot|mm] native    the same game for this machine (64-bit), in dev/out/zelda/native/<port>
-#   dev/zelda/build.sh [oot|mm] shot [s]  the binary under qemu-arm on Xvfb (llvmpipe, GLES2), screenshots in dev/out/zelda/shots/<port>
-#   dev/zelda/build.sh [oot|mm]           assets, game, libs and pack
-# oot is the default; its port is soh, mm's is 2ship. Output in dev/out/zelda/<port>.
-# Runs in the goodluck-zelda image (dev/zelda/Dockerfile, on top of goodluck-dev).
+# Ocarina of Time (Ship of Harkinian) and Majora's Mask (2 Ship 2 Harkinian) for goodluckOS, without the games.
+#   ./build.sh [oot|mm] assets    the port's o2r, and the game's from the rom in out/roms/<oot|mm>
+#   ./build.sh [oot|mm] game      the armhf binary, with the GLES2 renderer (patches/lus)
+#   ./build.sh [oot|mm] libs      the libraries it needs that goodluckOS lacks, into libs/
+#   ./build.sh [oot|mm] pack      launcher and assets/ into the folder, and <port>.tar for HOME/ports
+#   ./build.sh [oot|mm] native    the same game for this machine (64-bit), in out/native/<port>
+#   ./build.sh [oot|mm] shot [s]  the binary under qemu-arm on Xvfb (llvmpipe, GLES2), screenshots in out/shots/<port>
+#   ./build.sh [oot|mm]           assets, game, libs and pack
+# oot is the default; its port is soh, mm's is 2ship. Output in out/<port>.
+# Runs in the glosports-harbourmasters image (Dockerfile; shot in tools/shot.Dockerfile's), sources and build trees in
+# the harbourmasters-work volume.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-REPO=$(dirname "$(dirname "$HERE")")
-IMAGE=goodluck-zelda
+IMAGE=glosports-harbourmasters
 
 if [ ! -f /.dockerenv ]; then
     docker image inspect $IMAGE >/dev/null 2>&1 || docker build -t $IMAGE "$HERE"
-    exec docker run --rm -i -v "$REPO:/repo" -v goodluck-work:/work -e GL_JOBS -e ZELDA_ELF -e SHOTS -e ZELDA_GLES2 -e LUS_TEXLOG $IMAGE /repo/dev/zelda/build.sh "$@"
+    case " $* " in *" shot "*)
+        docker image inspect $IMAGE-shot >/dev/null 2>&1 || docker build -t $IMAGE-shot -f "$HERE/tools/shot.Dockerfile" "$HERE/tools"
+        IMAGE=$IMAGE-shot ;;
+    esac
+    exec docker run --rm -i -v "$HERE:/repo" -v harbourmasters-work:/work -e GL_JOBS -e ZELDA_ELF -e SHOTS -e ZELDA_GLES2 \
+        -e LUS_TEXLOG -e APP_VERSION $IMAGE /repo/build.sh "$@"
 fi
 
 GAME=oot
@@ -29,11 +34,10 @@ case $GAME in
         SRC=$W/src/Shipwright BLD=$W/build TARGET=soh ELF=soh/soh.elf DEPS= ;;
     mm) PORT=2ship URL=https://github.com/HarbourMasters/2ship2harkinian.git TAG=5.0.1 REV=8a24047f
         SRC=$W/src/2ship2harkinian BLD=$W/build-mm TARGET=2ship ELF=mm/2s2h.elf
-        DEPS=-DCMAKE_PROJECT_2s2h_INCLUDE=$HERE/2ship-deps.cmake ;;
+        DEPS=-DCMAKE_PROJECT_2s2h_INCLUDE=$HERE/cmake/2ship-deps.cmake ;;
 esac
-OUT=/repo/dev/out/zelda/$PORT
-ROMS=/repo/dev/out/zelda/roms/$GAME
-TARGET_LIBS=/work/br/out/target
+OUT=/repo/out/$PORT
+ROMS=/repo/out/roms/$GAME
 ARMFLAGS="-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard"
 JOBS=${GL_JOBS:-$(nproc)}
 COMMON=$W/build # toolchain file and libzip, shared by both games
@@ -144,7 +148,7 @@ port_assets() {
 
 # The same game for the build machine (64-bit, its own GL), to tell 32-bit bugs from renderer ones
 native() {
-    local dir=/repo/dev/out/zelda/native/$PORT
+    local dir=/repo/out/native/$PORT
     configure_native
     cmake --build "$BLD/native" -j "$JOBS" --target $TARGET -- -k 0
     mkdir -p "$dir"
@@ -152,7 +156,12 @@ native() {
     port_assets "$dir"
 }
 
-# Copy each NEEDED library (and its own NEEDED, recursively) that the rootfs doesn't ship
+# What every goodluckOS has, the upstream image too (glibc, the C++ runtime, SDL2, Mesa, ALSA and the libraries the
+# launcher draws with), as the Luanti app counts on
+SYSTEM_LIBS=" ld-linux-armhf.so.3 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libstdc++.so.6 libgcc_s.so.1
+    libSDL2-2.0.so.0 libz.so.1 libpng16.so.16 libasound.so.2 libdrm.so.2 libEGL.so.1 libGLESv2.so.2 libfreetype.so.6 "
+
+# Copy each NEEDED library (and its own NEEDED, recursively) that goodluckOS doesn't ship
 libs() {
     local queue=("$OUT/$(basename $ELF)") seen=" " f lib path
     rm -rf "$OUT/libs"; mkdir -p "$OUT/libs"
@@ -161,7 +170,7 @@ libs() {
         for lib in $(arm-linux-gnueabihf-readelf -d "$f" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'); do
             case "$seen" in *" $lib "*) continue ;; esac
             seen="$seen$lib "
-            [ -e "$TARGET_LIBS/usr/lib/$lib" ] || [ -e "$TARGET_LIBS/lib/$lib" ] && continue
+            case "$(echo $SYSTEM_LIBS | sed 's/^/ /; s/$/ /')" in *" $lib "*) continue ;; esac
             path=$(find /usr/lib/arm-linux-gnueabihf /lib/arm-linux-gnueabihf -name "$lib" 2>/dev/null | head -1)
             [ -n "$path" ] || { echo "missing on both sides: $lib" >&2; continue; }
             cp -L "$path" "$OUT/libs/"
@@ -173,19 +182,19 @@ libs() {
 
 # The port folder as one tar for HOME/ports
 pack() {
-    cp "$HERE/$PORT.sh" "$OUT/"
-    cp "$HERE/$PORT-defaults.json" "$OUT/defaults.json"
+    cp "$HERE/app/$PORT/$PORT.sh" "$OUT/"
+    cp "$HERE/app/$PORT/defaults.json" "$OUT/defaults.json"
     port_assets "$OUT"
-    # The launcher icon from cover.py, which runs on the host (the games' own art, so it isn't in git)
-    [ ! -f /repo/dev/out/zelda/covers/$PORT.png ] || cp /repo/dev/out/zelda/covers/$PORT.png "$OUT/icon.png"
-    tar -cf /repo/dev/out/zelda/$PORT.tar -C "$(dirname "$OUT")" $PORT
-    ls -l /repo/dev/out/zelda/$PORT.tar
+    # The launcher icon from tools/cover.py, which runs on the host (the games' own art, so it isn't in git)
+    [ ! -f /repo/out/covers/$PORT.png ] || cp /repo/out/covers/$PORT.png "$OUT/icon.png"
+    tar -cf /repo/out/$PORT.tar -C "$(dirname "$OUT")" $PORT
+    ls -l /repo/out/$PORT.tar
 }
 
 # The binary under qemu-arm on Xvfb, GLES2 on Mesa's llvmpipe: a screenshot every 30 s for $1 seconds
 # (ZELDA_ELF picks another binary, a 64-bit one runs without qemu; SHOTS another folder)
 shot() {
-    local secs=${1:-300} run=/tmp/$PORT-run shots=${SHOTS:-/repo/dev/out/zelda/shots/$PORT} elf=${ZELDA_ELF:-$OUT/$(basename $ELF)} t xvfb game
+    local secs=${1:-300} run=/tmp/$PORT-run shots=${SHOTS:-/repo/out/shots/$PORT} elf=${ZELDA_ELF:-$OUT/$(basename $ELF)} t xvfb game
     rm -rf "$run" "$shots"; mkdir -p "$run" "$shots"
     cp "$OUT"/*.o2r "$elf" "$run/"
     port_assets "$run"
