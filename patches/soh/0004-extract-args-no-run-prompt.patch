@@ -1,0 +1,33 @@
+--- soh-a/soh/soh/OTRGlobals.cpp
++++ soh-b/soh/soh/OTRGlobals.cpp
+@@ -587,21 +587,15 @@
+             case ES_EXTRACT_ARGS: {
+ #if !defined(__SWITCH__) && !defined(__WIIU__)
+                 if (args.empty()) {
+-                    SohGui::RegisterPopup(
+-                        "Run Ship of Harkinian", "All files have been processed. Run SoH?", "Yes", "No",
+-                        [&]() {
+-                            if (!std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) +
+-                                                         "/oot.o2r") &&
+-                                !std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) +
+-                                                         "/oot-mq.o2r")) {
+-                                extractStep = ES_EXTRACT;
+-                                promptStep = PS_FILE_CHECK;
+-                            } else {
+-                                extractStep = ES_VERIFY;
+-                            }
+-                        },
+-                        [&]() { exit(0); });
+-                    break;
++                    // Once the ROMs given are extracted, on to the game without asking, as 2 Ship 2 Harkinian does
++                    if (!std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) + "/oot.o2r") &&
++                        !std::filesystem::exists(Ship::Context::GetAppDirectoryPath(appShortName) + "/oot-mq.o2r")) {
++                        extractStep = ES_EXTRACT;
++                        promptStep = PS_FILE_CHECK;
++                    } else {
++                        extractStep = ES_VERIFY;
++                    }
++                    continue;
+                 }
+                 file = args.at(0);
+                 args.erase(args.begin());
