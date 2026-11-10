@@ -2,12 +2,15 @@
 # O2RS (the archives a ROM makes), CONFIG (the port's settings file) and KEEP (what of an older HOME/ports/<port> is
 # the player's). The game makes its assets from the player's ROM by itself, in its ROM Extraction window, when it is
 # started with the ROM: this finds the ROM in HOME first (by the CRC in its header, the version the port reads), or the
-# assets of an install from before the App Installer. Saves, settings and assets live in data/, which updates keep.
+# assets of an install from before the App Installer. Saves, settings and assets live in HOME/.config/<port>, outside
+# the app, as Luanti's worlds and Stardew Valley's saves do: an uninstall keeps them, and a new install needs no ROM.
 app=$(pwd)
-data=$app/data
+data=$HOME/.config/$PORT
 log=$HOME/logs/$PORT.log
 export SHIP_HOME=$data
 export LD_LIBRARY_PATH=$app/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+# where the first test builds kept them
+[ ! -d "$app/data" ] || [ -e "$data" ] || { mkdir -p "${data%/*}" && mv "$app/data" "$data"; }
 mkdir -p "$data" "$HOME/logs"
 
 # TAKES: the ROMs the port takes, in a few words (translated below)
@@ -70,7 +73,8 @@ rom_line() {
 }
 
 # the first ROM in HOME the port takes, as "<roms.txt line>|<file>|<entry in the zip, or nothing>": loose ROMs
-# anywhere but apps and the hidden folders, zips in HOME itself and in any n64 folder
+# anywhere but apps and the hidden folders, zips in HOME itself and in any n64 folder; a zipped one is unpacked into
+# the data folder for the game, and removed once it is done
 find_rom() {
     _r=$(find "$HOME" -maxdepth 5 \( -path "$HOME/.*" -o -path "$HOME/apps" \) -prune -o -type f \( -name '*.z64' -o \
             -name '*.Z64' -o -name '*.n64' -o -name '*.N64' -o -name '*.v64' -o -name '*.V64' \) -print 2>/dev/null |

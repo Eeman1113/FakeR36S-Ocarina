@@ -1,0 +1,69 @@
+name: Apps
+
+# Each port's App Installer zip (./build.sh <game> app), with nothing of the games in it, built side by side: on every
+# push to main as artifacts, and for a tag like v0.1.0 as that tag's release, with RELEASE.md as its notes.
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    strategy:
+      fail-fast: false
+      matrix:
+        game: [oot, mm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # the armhf game, the port's own o2r (no ROM), the libraries goodluckOS lacks, then the app; a tag names the version
+      - name: Build the app
+        run: |
+          v=$(git describe --tags --always)
+          case $GITHUB_REF in refs/tags/v*) v=${GITHUB_REF_NAME#v} ;; esac
+          export APP_VERSION=$v GL_JOBS=$(nproc)
+          ./build.sh ${{ matrix.game }} game
+          ./build.sh ${{ matrix.game }} assets
+          ./build.sh ${{ matrix.game }} libs
+          ./build.sh ${{ matrix.game }} app
+          ls -la out/*.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-${{ matrix.game }}
+          path: out/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: app
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" \
+            --title "Ship of Harkinian and 2 Ship 2 Harkinian ${GITHUB_REF_NAME#v} for goodluckOS" --notes-file RELEASE.md

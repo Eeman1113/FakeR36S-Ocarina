@@ -1,6 +1,7 @@
 #!/bin/sh
-# Ship of Harkinian (Ocarina of Time) with the GLES2 renderer, the App Installer's app: its first start makes the game's
-# assets from the player's ROM (common.sh). Saves and settings in data/. Log: HOME/logs/soh.log; overrides in data/env.
+# Ship of Harkinian (Ocarina of Time) with the GLES2 renderer, the App Installer's app: its first start makes
+# the game's assets from the player's ROM (common.sh). Saves, settings and assets in HOME/.config/soh (overrides:
+# its env); log: HOME/logs/soh.log.
 PORT=soh ELF=soh.elf TITLE="Ocarina of Time" O2RS="oot.o2r oot-mq.o2r" CONFIG=shipofharkinian.json
 KEEP="shipofharkinian.json imgui.ini Save SoHTimeSplitData.json"
 TAKES="N64 1.0 to 1.2 or PAL, GameCube or Master Quest"
