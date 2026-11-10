@@ -1,0 +1,13 @@
+diff --git a/mm/src/audio/lib/playback.c b/mm/src/audio/lib/playback.c
+--- a/mm/src/audio/lib/playback.c
++++ b/mm/src/audio/lib/playback.c
+@@ -196,7 +196,8 @@
+         sampleState = &gAudioCtx.sampleStateList[gAudioCtx.sampleStateOffset + i];
+         playbackState = &note->playbackState;
+         if (playbackState->parentLayer != NO_LAYER) {
+-#ifndef __WIIU__
++// 2S2H [Port] A 32-bit build (Wii U, armhf) maps the game below 0x7FFFFFFF, where this would skip every note
++#if !defined(__WIIU__) && UINTPTR_MAX > 0xFFFFFFFF
+             // OTRTODO: This skips playback if the pointer is below where memory on the N64 normally would be.
+             // This does not translate well to modern platforms and how they map memory.
+             // Considering that this check is not present in OoT/SoH, we may be able to remove this altogether.
