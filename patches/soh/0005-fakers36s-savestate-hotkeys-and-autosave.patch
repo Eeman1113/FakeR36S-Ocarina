@@ -1,17 +1,16 @@
 diff --git a/soh/soh/Enhancements/savestates.cpp b/soh/soh/Enhancements/savestates.cpp
-index 7ff40625..dced88e8 100644
+index 7ff40625..90d2d664 100644
 --- a/soh/soh/Enhancements/savestates.cpp
 +++ b/soh/soh/Enhancements/savestates.cpp
-@@ -14,6 +14,9 @@ extern "C" {
- #include "z64.h"
- #include "z64save.h"
- #include <variables.h>
+@@ -1,5 +1,8 @@
+ #include <algorithm>
+ #include <memory>
 +#include <SDL2/SDL.h>
 +#include <libultraship/bridge/consolevariablebridge.h>
 +#include "soh/cvar_prefixes.h"
- }
  
- extern "C" PlayState* gPlayState;
+ #include <spdlog/spdlog.h>
+ #include <ship/Context.h>
 @@ -363,7 +366,68 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
      return this->currentSlot;
  }
