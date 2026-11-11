@@ -15,6 +15,17 @@ This is a fork of [glOSports-harbourmasters](https://github.com/alvesmaicon/glOS
 
 On goodluckOS, use the original App Installer zip (`ShipOfHarkinian-*.zip`) as described below.
 
+## Saving
+
+| Buttons | What it does |
+|---|---|
+| Select + R1 | Save state to the current slot |
+| Select + L1 | Load the current slot |
+| Select + Right / Left | Next / previous slot (0 to 5) |
+| Select + X | Go back to the autosave state (refreshed every 5 seconds of gameplay) |
+
+Save states are on by default and live in memory: they are instant, but they are gone when you quit the game or power off. For progress that survives that, the game's own save is also automatic here: Ship of Harkinian's **Autosave** and **Remember Save Location** are on by default, so the game saves itself every few minutes and on key events, and you continue where you saved. To keep a session paused without quitting, tap the power button: FakeR36S-OS freezes the game with the screen off and resumes it exactly where you were.
+
 ## Credits
 
 - **alvesmaicon** for [glOSports-harbourmasters](https://github.com/alvesmaicon/glOSports-harbourmasters): the GLES2 renderer, 32-bit and audio fixes, launcher and build this fork is built on.

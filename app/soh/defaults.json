@@ -6,7 +6,9 @@
                 "HideRandomizerQuest": 1,
                 "HideSpeedrunMasterQuest": 1,
                 "HideSpeedrunQuest": 1
-            }
+            },
+            "Autosave": 1,
+            "RememberSaveLocation": 1
         },
         "gOpenWindows": {
             "Notifications": 0
@@ -15,6 +17,10 @@
             "BootSequence": 1,
             "LowResMode": 0,
             "TextureFilter": 1
+        },
+        "gCheats": {
+            "SaveStatesEnabled": 1,
+            "SaveStatesAutosave": 5
         }
     },
     "ConfigVersion": 7
