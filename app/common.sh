@@ -107,6 +107,8 @@ play() {
 }
 
 start() {
+    # a zipped ROM unpacked for an extraction: closing the game from its menu ends this script with it
+    rm -f "$data"/rom.*
     # an install from before the App Installer: its assets, settings and saves
     _old=$HOME/ports/$PORT
     if ! ready && [ -d "$_old" ]; then
@@ -128,7 +130,7 @@ start() {
     fi
     # the port's own part of the extraction, for this ROM's version (soh: Torch's yml, one folder of many)
     command -v prepare > /dev/null && prepare "$(echo "$_line" | cut -d ' ' -f 2)"
-    echo "$(date '+%F %T') extracting $_file ${_entry:+($_entry) }: $_line" >> "$HOME/logs/$PORT-import.log"
+    echo "$(date '+%F %T') extracting $_file${_entry:+ ($_entry)}: $_line" >> "$HOME/logs/$PORT-import.log"
     play "$_rom"
     rm -f "$data"/rom.*
 }
