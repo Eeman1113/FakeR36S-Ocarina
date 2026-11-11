@@ -26,6 +26,16 @@ On goodluckOS, use the original App Installer zip (`ShipOfHarkinian-*.zip`) as d
 
 Save states are on by default and live in memory: they are instant, but they are gone when you quit the game or power off. For progress that survives that, the game's own save is also automatic here: Ship of Harkinian's **Autosave** and **Remember Save Location** are on by default, so the game saves itself every few minutes and on key events, and you continue where you saved. To keep a session paused without quitting, tap the power button: FakeR36S-OS freezes the game with the screen off and resumes it exactly where you were.
 
+## Bring your emulator playthrough
+
+`tools/n64save2soh.py` moves an Ocarina of Time game from an N64 emulator into Ship of Harkinian. It reads a RetroArch Mupen64Plus or ParaLLEl N64 save (`.srm`), a raw SRAM dump (`.sra`), or a **save state** (`.state`, from which it takes the live game in memory, as if you had saved at that moment), and writes `oot_save.sav`, Ship of Harkinian's old save format. Copy that to `HOME/.config/soh/`; on its next start the game converts it into its own save files.
+
+```sh
+python3 tools/n64save2soh.py --info "Zelda - Ocarina of Time.srm"
+python3 tools/n64save2soh.py "Zelda - Ocarina of Time.srm" oot_save.sav
+python3 tools/n64save2soh.py --state "Zelda - Ocarina of Time.state" oot_save.sav
+```
+
 ## Credits
 
 - **alvesmaicon** for [glOSports-harbourmasters](https://github.com/alvesmaicon/glOSports-harbourmasters): the GLES2 renderer, 32-bit and audio fixes, launcher and build this fork is built on.
