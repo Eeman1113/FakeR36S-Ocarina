@@ -1,0 +1,133 @@
+diff --git a/src/Companion.cpp b/src/Companion.cpp
+index d73b616..2f0641f 100644
+--- a/src/Companion.cpp
++++ b/src/Companion.cpp
+@@ -1267,6 +1267,7 @@ void Companion::ProcessFile(YAML::Node root, std::atomic<size_t>& assetCount) {
+     if (root[":config"]) {
+         this->ParseCurrentFileConfig(root[":config"], assetCount);
+     }
++    this->gRoundFiles.emplace_back(this->gCurrentFile, this->gCurrentExternalFiles);
+ 
+     if (!this->NodeHasChanges(this->gCurrentFile) && !this->gNodeForceProcessing) {
+         return;
+@@ -1296,6 +1297,69 @@ void Companion::ProcessFile(YAML::Node root, std::atomic<size_t>& assetCount) {
+     ProcessExportFile();
+ }
+ 
++// A file is only consulted again by the files listing it in external_files (always a block list in the yml)
++void Companion::CountExternalRefs(const std::vector<fs::directory_entry>& entries) {
++    for (const auto& entry : entries) {
++        if (entry.is_directory()) {
++            continue;
++        }
++        std::ifstream in(entry.path());
++        std::string line;
++        bool list = false;
++        while (std::getline(in, line)) {
++            const auto first = line.find_first_not_of(' ');
++            if (first == std::string::npos) {
++                continue;
++            }
++            if (line.compare(first, 15, "external_files:") == 0) {
++                list = true;
++            } else if (list && line.compare(first, 2, "- ") == 0) {
++                auto name = line.substr(first + 2);
++                name.erase(name.find_last_not_of(" \r") + 1);
++                this->gExternalRefs[(this->gSourceDirectory / name).generic_string()]++;
++            } else {
++                list = false;
++            }
++        }
++    }
++}
++
++// Drops what this round processed, and the externals it used, once no file left lists them
++void Companion::ReleaseRound() {
++    std::vector<std::string> candidates;
++    for (auto& [file, externals] : this->gRoundFiles) {
++        candidates.push_back(file);
++        for (auto& ext : externals) {
++            this->gExternalRefs[ext]--;
++            candidates.push_back(ext);
++        }
++    }
++    this->gRoundFiles.clear();
++    for (auto& file : candidates) {
++        auto refs = this->gExternalRefs.find(file);
++        if ((refs == this->gExternalRefs.end() || refs->second <= 0) && this->gProcessedFiles.contains(file) &&
++            this->gAddrMap.contains(file)) {
++            this->ReleaseFile(file);
++        }
++    }
++}
++
++void Companion::ReleaseFile(const std::string& file) {
++    auto drop = [this](const std::string& f) {
++        this->gParseResults.erase(f);
++        this->gAddrMap.erase(f);
++        this->gNodesByTypeCache.erase(f);
++        this->gNodesByTypeCacheValid.erase(f);
++    };
++    if (auto subs = this->gSubFilesOf.find(file); subs != this->gSubFilesOf.end()) {
++        for (auto& sub : subs->second) {
++            drop(sub);
++        }
++        this->gSubFilesOf.erase(subs);
++    }
++    drop(file);
++}
++
+ std::vector<fs::directory_entry> Companion::GetAssetYMLs(YAML::Node& rom) const {
+     if (!this->gSingleYMLPath.empty()) {
+         std::vector<fs::directory_entry> single;
+@@ -1634,6 +1698,10 @@ void Companion::Process(std::atomic<size_t>& assetCount) {
+     }
+ 
+     std::vector<fs::directory_entry> entries = GetAssetYMLs(rom);
++    const bool release = this->gConfig.exporterType == ExportType::Binary && mShouldProcess;
++    if (release) {
++        this->CountExternalRefs(entries);
++    }
+ 
+     for (const auto& entry : entries) {
+         if (entry.is_directory()) {
+@@ -1775,6 +1843,9 @@ void Companion::Process(std::atomic<size_t>& assetCount) {
+                     }
+                 }
+             }
++            if (release) {
++                this->ReleaseRound();
++            }
+         }
+     }
+ 
+@@ -2488,6 +2559,7 @@ std::optional<YAML::Node> Companion::AddSubFileAsset(YAML::Node asset, std::stri
+     auto oldCompressionType = this->gCurrentCompressionType;
+     auto oldCompressedSize = this->gCurrentCompressedSize;
+     this->gSubFileList.push_back(newFileName);
++    this->gSubFilesOf[this->gCurrentFile].push_back(newFileName);
+     this->gCurrentAssetName = "Parsing: " + newFileName;
+     if (this->gAssetCounter) {
+         (*this->gAssetCounter)++;
+diff --git a/src/Companion.h b/src/Companion.h
+index b9466ec..052da85 100644
+--- a/src/Companion.h
++++ b/src/Companion.h
+@@ -324,11 +324,17 @@ private:
+         gNodesByTypeCache;
+     // Validity bitmap; bit 0 = !includeAutogen, bit 1 = includeAutogen.
+     std::unordered_map<std::string, std::unordered_map<std::string, uint8_t>> gNodesByTypeCacheValid;
++    std::unordered_map<std::string, int> gExternalRefs;
++    std::unordered_map<std::string, std::vector<std::string>> gSubFilesOf;
++    std::vector<std::pair<std::string, std::vector<std::string>>> gRoundFiles;
+ 
+     void ProcessParseFile(YAML::Node root, std::atomic<size_t>& assetCount);
+     void ProcessExportFile();
+     void ProcessFile(YAML::Node root);
+     void ProcessFile(YAML::Node root, std::atomic<size_t>& assetCount);
++    void CountExternalRefs(const std::vector<fs::directory_entry>& entries);
++    void ReleaseRound();
++    void ReleaseFile(const std::string& file);
+     std::optional<std::tuple<std::string, YAML::Node>> FindNodeInOverlaySegments(uint32_t addr, const std::string& file);
+     std::optional<std::tuple<std::string, YAML::Node>> FindInExternalByVRAM(uint32_t addr, const std::string& file);
+     void ParseEnums(std::string& file);

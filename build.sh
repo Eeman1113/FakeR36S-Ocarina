@@ -55,6 +55,7 @@ source_tree() {
     git -C "$SRC" submodule update --init --depth 1 -q
     apply_patches "$SRC" "$HERE"/patches/$PORT/*.patch
     apply_patches "$SRC/libultraship" "$HERE"/patches/lus/*.patch
+    if [ $GAME = oot ]; then apply_patches "$SRC/torch" "$HERE"/patches/torch/*.patch; fi
 }
 
 # Patches $2... onto the tree $1; when one changed since it was applied, start again from a clean tree
