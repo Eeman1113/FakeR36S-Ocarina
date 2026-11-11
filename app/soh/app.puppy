@@ -2,7 +2,7 @@
 # assets from the player's own ROM, found in HOME.
 [ENTRY]
 CATEGORY=Games
-NAME=The Legend of Zelda - Ocarina of Time
+NAME=The Legend of Zelda: Ocarina of Time
 DESCRIPTION=Ship of Harkinian, from your own ROM: put it in HOME and open this
 DESCRIPTION_pt-BR=Ship of Harkinian, da sua própria ROM: coloque na HOME e abra aqui
 COMMAND=sh soh.sh

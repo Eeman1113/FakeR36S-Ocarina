@@ -2,7 +2,7 @@
 # assets from the player's own ROM, found in HOME.
 [ENTRY]
 CATEGORY=Games
-NAME=The Legend of Zelda - Majora's Mask
+NAME=The Legend of Zelda: Majora's Mask
 DESCRIPTION=2 Ship 2 Harkinian, from your own ROM: put it in HOME and open this
 DESCRIPTION_pt-BR=2 Ship 2 Harkinian, da sua própria ROM: coloque na HOME e abra aqui
 COMMAND=sh 2ship.sh
