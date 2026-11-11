@@ -268,6 +268,38 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED, compresslevel=9) as
         "$(($(stat -c %s "$zip") / 1048576)) MB zipped"
 }
 
+# FakeR36S-OS (github.com/Eeman1113/FakeR36S-OS) has no App Installer: the same app as a port that unzips into HOME's
+# root, ports/<port>/ plus its Puppy entry and icon where FakeR36S-OS's fr-ports-sync lists it in EmulationStation's
+# Ports (and Puppy). The app's launcher works out of its own folder, which run.sh enters first.
+build_fakers36s() {
+    local folder v a s zip
+    case $GAME in oot) folder=ShipOfHarkinian ;; mm) folder=2Ship2Harkinian ;; esac
+    a=/repo/out/app/$folder
+    [ -f "$a/app.puppy" ] || build_app
+    s=/repo/out/fakers36s/$PORT
+    rm -rf "$s"
+    mkdir -p "$s/ports" "$s/.local/share/applications" "$s/.local/share/icons"
+    cp -r "$a" "$s/ports/$PORT"
+    cp "$a/icon.png" "$s/.local/share/icons/$PORT.png"
+    printf '#!/bin/sh\n# FakeR36S-OS entry point: the app launcher expects to start in its own folder\ncd "$(dirname "$(readlink -f "$0")")" && exec sh ./%s.sh "$@"\n' \
+        "$PORT" > "$s/ports/$PORT/run.sh"
+    chmod 755 "$s/ports/$PORT/run.sh"
+    sed -e 's/^CATEGORY=.*/CATEGORY=Ports/' \
+        -e "s#^COMMAND=.*#COMMAND=/home/player/ports/$PORT/run.sh#" \
+        -e "s#^ICON=.*#ICON=/home/player/.local/share/icons/$PORT.png#" \
+        "$a/app.puppy" > "$s/.local/share/applications/$PORT.puppy"
+    v=${APP_VERSION:-$(git -c safe.directory='*' -C /repo describe --tags --always --dirty)}
+    zip=/repo/out/FakeR36S-$folder-$v.zip
+    rm -f "$zip"
+    (cd "$s" && python3 -c 'import os, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for top in ("ports", ".local"):
+        for root, dirs, files in os.walk(top):
+            dirs.sort()
+            for f in sorted(files): z.write(os.path.join(root, f))' "$zip")
+    echo "== out/${zip##*/}: unzip into the root of FakeR36S-OS's HOME, $(($(stat -c %s "$zip") / 1048576)) MB zipped"
+}
+
 source_tree
 case "${1:-all}" in
     assets) assets ;;
@@ -277,6 +309,7 @@ case "${1:-all}" in
     native) native ;;
     shot) shot "${2:-}" ;;
     app) build_app ;;
+    fakers36s) build_fakers36s ;;
     all) assets; game; libs; pack ;;
-    *) echo "usage: $0 [oot|mm] [assets|game|libs|pack|app|native|shot [seconds]]" >&2; exit 1 ;;
+    *) echo "usage: $0 [oot|mm] [assets|game|libs|pack|app|fakers36s|native|shot [seconds]]" >&2; exit 1 ;;
 esac

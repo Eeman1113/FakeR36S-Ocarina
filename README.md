@@ -1,3 +1,35 @@
+# FakeR36S-Ocarina: native Ocarina of Time on a fake R36S
+
+The Legend of Zelda: Ocarina of Time running natively (no emulator) on the fake R36S / GA36-MB handheld (Allwinner A23 or A33, Mali-400) under [FakeR36S-OS](https://github.com/Eeman1113/FakeR36S-OS) or [goodluckOS](https://github.com/CodeZombie/goodluckOS). Majora's Mask builds too.
+
+This is a fork of [glOSports-harbourmasters](https://github.com/alvesmaicon/glOSports-harbourmasters) by **alvesmaicon**, who did the hard part: an OpenGL ES 2 renderer for [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) on the Mali-400, the 32-bit ARM fixes and the audio fixes. FakeR36S-Ocarina adds a FakeR36S-OS package (it shows up in EmulationStation under **Ports**) and tuning for the dual-core A23.
+
+**No game files are included.** You need your own Ocarina of Time ROM (N64 1.0 to 1.2 or PAL, GameCube, Master Quest). The game builds its assets from it on the first start.
+
+## Install on FakeR36S-OS
+
+1. Download `FakeR36S-ShipOfHarkinian-*.zip` from [Releases](https://github.com/Eeman1113/FakeR36S-Ocarina/releases) (or the latest build under Actions).
+2. Unzip it into the root of the card's **HOME** partition. It adds `ports/soh/` and its menu entry.
+3. Copy your ROM (`.z64`, `.n64`, `.v64` or a zip of one) to the root of HOME.
+4. On the handheld, open **Ports**, then **The Legend of Zelda: Ocarina of Time**. The first start extracts the game from your ROM (a few minutes), then the game starts. Saves and settings live in `HOME/.config/soh`.
+
+On goodluckOS, use the original App Installer zip (`ShipOfHarkinian-*.zip`) as described below.
+
+## Credits
+
+- **alvesmaicon** for [glOSports-harbourmasters](https://github.com/alvesmaicon/glOSports-harbourmasters): the GLES2 renderer, 32-bit and audio fixes, launcher and build this fork is built on.
+- **[HarbourMasters](https://github.com/HarbourMasters)** for Ship of Harkinian and 2 Ship 2 Harkinian.
+- **Kenix3 and contributors** for [libultraship](https://github.com/Kenix3/libultraship).
+- **The Zelda Reverse Engineering Team** ([zeldaret](https://github.com/zeldaret/oot)) for the decompilation everything starts from.
+- **Lywx** for Torch, and the authors of ZAPDTR, OTRExporter and libzip.
+- **CodeZombie and contributors** for [goodluckOS](https://github.com/CodeZombie/goodluckOS), the base of FakeR36S-OS.
+
+The Legend of Zelda is Nintendo's. Use your own legally obtained ROM.
+
+---
+
+## Original README (glOSports-harbourmasters)
+
 # Ship of Harkinian and 2 Ship 2 Harkinian for goodluckOS
 
 Ocarina of Time and Majora's Mask, natively on the GA36-MB (Allwinner A33, 32-bit ARM, Mali-400, 512 MB of RAM) under [goodluckOS](https://github.com/CodeZombie/goodluckOS), from HarbourMasters' PC ports: [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) 9.3.0 and [2 Ship 2 Harkinian](https://github.com/HarbourMasters/2ship2harkinian) 5.0.1. Their renderer needs OpenGL ES 3, which the Mali-400 lacks, so this port brings one written for OpenGL ES 2, a fix for 32-bit builds (the sky, the logo and the text went missing) and audio fixes. Ocarina of Time runs at 480p and 20 FPS, the cartridge's frame rate.

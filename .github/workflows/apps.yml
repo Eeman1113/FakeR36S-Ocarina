@@ -40,6 +40,7 @@ jobs:
           ./build.sh ${{ matrix.game }} assets
           ./build.sh ${{ matrix.game }} libs
           ./build.sh ${{ matrix.game }} app
+          ./build.sh ${{ matrix.game }} fakers36s
           ls -la out/*.zip
 
       - uses: actions/upload-artifact@v7
@@ -66,4 +67,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" \
-            --title "Ship of Harkinian and 2 Ship 2 Harkinian ${GITHUB_REF_NAME#v} for goodluckOS" --notes-file RELEASE.md
+            --title "FakeR36S-Ocarina ${GITHUB_REF_NAME#v}: Ocarina of Time and Majora's Mask native for FakeR36S-OS and goodluckOS" --notes-file RELEASE.md
