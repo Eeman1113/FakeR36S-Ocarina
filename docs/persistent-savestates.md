@@ -43,7 +43,7 @@ reach, and the fixup count per state is logged to find out how often it would ma
 
 ## On the console
 
-- Manual slots (Select+R1 / Select+L1) are written to `HOME/.config/soh/states/slot<N>.state`.
+- Manual slots (Select+R1 / Select+L1) are written to `HOME/.config/soh/states/slot<N>.frstate`.
 - The rolling autosave stays in memory every 5 s and is written to the card every 30 s and when you
   quit (Select+Start), in a background thread, so the game doesn't stutter.
 - After a restart: load your save file, then Select+X (autosave) or Select+L1 (slot) brings you back
