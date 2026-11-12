@@ -58,4 +58,4 @@ All four parts are in the build (patches `soh/0005`, `soh/0006`, `lus/0003`, `-n
 3. The card format (`FRSZ` zero-run encoded; header, asset paths, fixups, the plain parts of the state, the 43 static-data buffers), written by a background thread.
 4. Reading a state after a restart: assets reloaded, pointers rebuilt, refused if the build or the memory layout differ.
 
-Not yet confirmed on the console. The game log (`HOME/logs/soh.log`) says how many pointers each written and read state had (`[FakeR36S] state ...`), which is the first thing to check if a loaded state misbehaves.
+Confirmed on the console (2026-11-13): a state saved, the game quit, the console powered off and on, and the state loaded back to the exact moment. The game log (`HOME/logs/soh.log`) says how many pointers each written and read state had (`[FakeR36S] state ...`), which is the first thing to check if a loaded state misbehaves.
