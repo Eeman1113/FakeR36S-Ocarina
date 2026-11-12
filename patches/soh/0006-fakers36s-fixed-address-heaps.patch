@@ -1,0 +1,67 @@
+diff --git a/soh/src/buffers/heaps.c b/soh/src/buffers/heaps.c
+index de81705c..e67c5a2b 100644
+--- a/soh/src/buffers/heaps.c
++++ b/soh/src/buffers/heaps.c
+@@ -8,11 +8,47 @@
+ #ifndef _MSC_VER
+ #include <unistd.h>
+ #endif
++#ifdef __linux__
++#include <sys/mman.h>
++#ifndef MAP_FIXED_NOREPLACE
++#define MAP_FIXED_NOREPLACE 0x100000
++#endif
++#endif
+ 
+ u8* gAudioHeap;
+ u8* gSystemHeap;
+ 
++// FakeR36S-Ocarina: the heaps at the same addresses on every run, so pointers inside a save state
++// written to disk stay valid after a restart (docs/persistent-savestates.md). Falls back to the
++// normal allocation if the addresses are taken; gFrFixedHeaps says which one happened.
++#define FR_SYSTEM_HEAP_ADDR 0x20000000u
++#define FR_AUDIO_HEAP_ADDR 0x20800000u
++int gFrFixedHeaps = 0;
++
++#ifdef __linux__
++static u8* Heaps_MapFixed(uintptr_t addr, size_t size) {
++    void* p = mmap((void*)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
++    if (p == MAP_FAILED) return NULL;
++    if ((uintptr_t)p != addr) {   // an old kernel took the address as a hint only
++        munmap(p, size);
++        return NULL;
++    }
++    return (u8*)p;
++}
++#endif
++
+ void Heaps_Alloc(void) {
++#ifdef __linux__
++    gSystemHeap = Heaps_MapFixed(FR_SYSTEM_HEAP_ADDR, SYSTEM_HEAP_SIZE);
++    gAudioHeap = Heaps_MapFixed(FR_AUDIO_HEAP_ADDR, AUDIO_HEAP_SIZE);
++    if (gSystemHeap != NULL && gAudioHeap != NULL) {
++        gFrFixedHeaps = 1;
++        return;
++    }
++    if (gSystemHeap != NULL) munmap(gSystemHeap, SYSTEM_HEAP_SIZE);
++    if (gAudioHeap != NULL) munmap(gAudioHeap, AUDIO_HEAP_SIZE);
++    gSystemHeap = gAudioHeap = NULL;
++#endif
+ #ifdef _MSC_VER
+     gAudioHeap = (u8*)_aligned_malloc(AUDIO_HEAP_SIZE, 0x10);
+     gSystemHeap = (u8*)_aligned_malloc(SYSTEM_HEAP_SIZE, 0x10);
+@@ -31,6 +67,14 @@ void Heaps_Alloc(void) {
+ }
+ 
+ void Heaps_Free(void) {
++#ifdef __linux__
++    if (gFrFixedHeaps) {
++        munmap(gAudioHeap, AUDIO_HEAP_SIZE);
++        munmap(gSystemHeap, SYSTEM_HEAP_SIZE);
++        gFrFixedHeaps = 0;
++        return;
++    }
++#endif
+ #ifdef _MSC_VER
+     _aligned_free(gAudioHeap);
+     _aligned_free(gSystemHeap);

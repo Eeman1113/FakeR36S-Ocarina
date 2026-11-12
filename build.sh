@@ -137,7 +137,8 @@ game() {
     toolchain
     build_libzip
     cmake -S "$SRC" -B "$BLD/armhf" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$COMMON/armhf.cmake" -DCMAKE_PREFIX_PATH="$PREFIX" \
-        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="$ARMFLAGS" -DCMAKE_CXX_FLAGS="$ARMFLAGS" -DUSE_OPENGLES=ON -DUSE_GLES2=${ZELDA_GLES2:-ON} $DEPS
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="$ARMFLAGS" -DCMAKE_CXX_FLAGS="$ARMFLAGS" -DUSE_OPENGLES=ON -DUSE_GLES2=${ZELDA_GLES2:-ON} \
+        -DCMAKE_EXE_LINKER_FLAGS=-no-pie $DEPS   # FakeR36S: the game's code at the same address on every run (save states on disk)
     cmake --build "$BLD/armhf" -j "$JOBS" --target $TARGET -- -k 0
     cp "$BLD/armhf/$ELF" "$OUT/"
     arm-linux-gnueabihf-strip "$OUT/$(basename $ELF)"
