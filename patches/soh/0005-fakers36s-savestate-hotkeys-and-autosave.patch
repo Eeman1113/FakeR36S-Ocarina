@@ -1,17 +1,679 @@
 diff --git a/soh/soh/Enhancements/savestates.cpp b/soh/soh/Enhancements/savestates.cpp
-index 7ff40625..8930431a 100644
+index 7ff40625..3d08ec37 100644
 --- a/soh/soh/Enhancements/savestates.cpp
 +++ b/soh/soh/Enhancements/savestates.cpp
-@@ -1,5 +1,8 @@
+@@ -1,5 +1,22 @@
  #include <algorithm>
  #include <memory>
 +#include <SDL2/SDL.h>
 +#include <libultraship/bridge/consolevariablebridge.h>
 +#include "soh/cvar_prefixes.h"
++#include <atomic>
++#include <condition_variable>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <deque>
++#include <filesystem>
++#include <map>
++#include <new>
++#include <string>
++#include <thread>
++#include <vector>
++#include <unistd.h>
++#include <ship/resource/ResourceManager.h>
  
  #include <spdlog/spdlog.h>
  #include <ship/Context.h>
-@@ -363,7 +366,92 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
+@@ -164,10 +181,13 @@ class SaveState {
+   public:
+     SaveState(std::shared_ptr<SaveStateMgr> mgr, unsigned int slot);
+ 
+-  private:
++  public: // FakeR36S: frdisk reads and writes these
+     unsigned int slot;
+     std::shared_ptr<SaveStateMgr> saveStateMgr;
+     std::shared_ptr<SaveStateInfo> info;
++    std::vector<std::shared_ptr<void>> frKeep; // assets a state read from the card points into
++
++  private:
+ 
+     void Save(void);
+     void Load(void);
+@@ -349,6 +369,632 @@ void SaveState::LoadTransitionActors(void) {
+     }
+ }
+ 
++
++// ================================================================================================
++// FakeR36S-Ocarina: save states on the card, valid after a restart (docs/persistent-savestates.md)
++//
++// A state is a copy of game memory full of pointers. With the heaps and soh.elf at fixed addresses
++// (patch 0006, -no-pie) only pointers into assets from the .o2r still move between runs. Every
++// asset is built inside ResourceManager::LoadResourceProcess, which libultraship patch 0003 wraps
++// in FrTrack_Push/FrTrack_Pop; the global operator new below records each block allocated in
++// between as (asset path, block number). Loading the same asset again allocates the same blocks in
++// the same order, so a pointer saved as (asset, block, offset) can be rebuilt in any later run.
++// ================================================================================================
++extern "C" int gFrFixedHeaps;
++
++namespace frtrack {
++template <class T> struct MallocAlloc {
++    using value_type = T;
++    MallocAlloc() = default;
++    template <class U> MallocAlloc(const MallocAlloc<U>&) {
++    }
++    T* allocate(size_t n) {
++        void* p = malloc(n * sizeof(T));
++        if (p == nullptr) throw std::bad_alloc();
++        return static_cast<T*>(p);
++    }
++    void deallocate(T* p, size_t) {
++        free(p);
++    }
++    template <class U> bool operator==(const MallocAlloc<U>&) const {
++        return true;
++    }
++    template <class U> bool operator!=(const MallocAlloc<U>&) const {
++        return false;
++    }
++};
++
++struct Block {
++    uint32_t path, idx, size;
++};
++struct StrLess {
++    bool operator()(const char* a, const char* b) const {
++        return strcmp(a, b) < 0;
++    }
++};
++using BlockMap = std::map<uintptr_t, Block, std::less<uintptr_t>, MallocAlloc<std::pair<const uintptr_t, Block>>>;
++using KeyMap = std::map<uint64_t, uintptr_t, std::less<uint64_t>, MallocAlloc<std::pair<const uint64_t, uintptr_t>>>;
++using PathIndex = std::map<const char*, uint32_t, StrLess, MallocAlloc<std::pair<const char* const, uint32_t>>>;
++using PathVec = std::vector<char*, MallocAlloc<char*>>;
++
++// never destroyed: the tracker must outlive every static destructor that frees memory
++static std::mutex& Mu() {
++    static std::mutex m;
++    return m;
++}
++static BlockMap& Blocks() {
++    static BlockMap* m = new (malloc(sizeof(BlockMap))) BlockMap();
++    return *m;
++}
++static KeyMap& Keys() {
++    static KeyMap* m = new (malloc(sizeof(KeyMap))) KeyMap();
++    return *m;
++}
++static PathIndex& Index() {
++    static PathIndex* m = new (malloc(sizeof(PathIndex))) PathIndex();
++    return *m;
++}
++static PathVec& Paths() {
++    static PathVec* m = new (malloc(sizeof(PathVec))) PathVec();
++    return *m;
++}
++
++struct Frame {
++    uint32_t path, next;
++};
++static const int kMaxDepth = 32;
++static thread_local Frame tStack[kMaxDepth];
++static thread_local int tDepth = 0;
++static std::atomic<uint32_t> gCount{ 0 };
++static std::atomic<uintptr_t> gLo{ UINTPTR_MAX }, gHi{ 0 };
++
++static uint64_t Key(uint32_t path, uint32_t idx) {
++    return ((uint64_t)path << 32) | idx;
++}
++
++// with Mu() held
++static uint32_t Intern(const char* path) {
++    auto it = Index().find(path);
++    if (it != Index().end()) return it->second;
++    char* copy = strdup(path);
++    uint32_t id = (uint32_t)Paths().size();
++    Paths().push_back(copy);
++    Index()[copy] = id;
++    return id;
++}
++
++static void OnAlloc(void* p, size_t n) {
++    if (p == nullptr || tDepth == 0 || tDepth > kMaxDepth) return;
++    Frame& f = tStack[tDepth - 1];
++    const uintptr_t a = (uintptr_t)p;
++    {
++        std::lock_guard<std::mutex> lock(Mu());
++        Blocks()[a] = { f.path, f.next, (uint32_t)n };
++        Keys()[Key(f.path, f.next)] = a;
++    }
++    f.next++;
++    gCount.fetch_add(1, std::memory_order_relaxed);
++    uintptr_t lo = gLo.load(std::memory_order_relaxed);
++    while (a < lo && !gLo.compare_exchange_weak(lo, a)) {
++    }
++    uintptr_t hi = gHi.load(std::memory_order_relaxed);
++    while (a + n > hi && !gHi.compare_exchange_weak(hi, a + n)) {
++    }
++}
++
++static void OnFree(void* p) {
++    if (p == nullptr || gCount.load(std::memory_order_relaxed) == 0) return;
++    const uintptr_t a = (uintptr_t)p;
++    if (a < gLo.load(std::memory_order_relaxed) || a >= gHi.load(std::memory_order_relaxed)) return;
++    std::lock_guard<std::mutex> lock(Mu());
++    auto it = Blocks().find(a);
++    if (it == Blocks().end()) return;
++    auto kt = Keys().find(Key(it->second.path, it->second.idx));
++    if (kt != Keys().end() && kt->second == a) Keys().erase(kt);
++    Blocks().erase(it);
++    gCount.fetch_sub(1, std::memory_order_relaxed);
++}
++
++// A copy of the registry, sorted by address, for scanning a state without holding the lock
++struct Range {
++    uintptr_t base, end;
++    uint32_t path, idx;
++};
++static std::vector<Range> Snapshot() {
++    std::vector<Range> out;
++    std::lock_guard<std::mutex> lock(Mu());
++    out.reserve(Blocks().size());
++    for (auto& b : Blocks()) out.push_back({ b.first, b.first + b.second.size, b.second.path, b.second.idx });
++    return out;
++}
++static std::string PathOf(uint32_t id) {
++    std::lock_guard<std::mutex> lock(Mu());
++    return id < Paths().size() ? std::string(Paths()[id]) : std::string();
++}
++static bool Lookup(const std::string& path, uint32_t idx, uintptr_t& base) {
++    std::lock_guard<std::mutex> lock(Mu());
++    auto it = Index().find(path.c_str());
++    if (it == Index().end()) return false;
++    auto kt = Keys().find(Key(it->second, idx));
++    if (kt == Keys().end()) return false;
++    base = kt->second;
++    return true;
++}
++} // namespace frtrack
++
++extern "C" void FrTrack_Push(const char* path) {
++    using namespace frtrack;
++    if (tDepth < kMaxDepth) {
++        uint32_t id;
++        {
++            std::lock_guard<std::mutex> lock(Mu());
++            id = Intern(path);
++        }
++        tStack[tDepth] = { id, 0 };
++    }
++    tDepth++;
++}
++
++extern "C" void FrTrack_Pop(void) {
++    if (frtrack::tDepth > 0) frtrack::tDepth--;
++}
++
++// The program-wide allocator: plain malloc, plus the record above while an asset is being built.
++void* operator new(std::size_t n) {
++    void* p = std::malloc(n ? n : 1);
++    if (p == nullptr) throw std::bad_alloc();
++    frtrack::OnAlloc(p, n);
++    return p;
++}
++void* operator new[](std::size_t n) {
++    return ::operator new(n);
++}
++void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
++    void* p = std::malloc(n ? n : 1);
++    frtrack::OnAlloc(p, n);
++    return p;
++}
++void* operator new[](std::size_t n, const std::nothrow_t& t) noexcept {
++    return ::operator new(n, t);
++}
++void* operator new(std::size_t n, std::align_val_t al) {
++    std::size_t a = (std::size_t)al < sizeof(void*) ? sizeof(void*) : (std::size_t)al;
++    void* p = nullptr;
++    if (posix_memalign(&p, a, n ? n : 1) != 0) throw std::bad_alloc();
++    frtrack::OnAlloc(p, n);
++    return p;
++}
++void* operator new[](std::size_t n, std::align_val_t al) {
++    return ::operator new(n, al);
++}
++void* operator new(std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept {
++    try {
++        return ::operator new(n, al);
++    } catch (...) { return nullptr; }
++}
++void* operator new[](std::size_t n, std::align_val_t al, const std::nothrow_t& t) noexcept {
++    return ::operator new(n, al, t);
++}
++void operator delete(void* p) noexcept {
++    frtrack::OnFree(p);
++    std::free(p);
++}
++void operator delete[](void* p) noexcept {
++    ::operator delete(p);
++}
++void operator delete(void* p, std::size_t) noexcept {
++    ::operator delete(p);
++}
++void operator delete[](void* p, std::size_t) noexcept {
++    ::operator delete(p);
++}
++void operator delete(void* p, const std::nothrow_t&) noexcept {
++    ::operator delete(p);
++}
++void operator delete[](void* p, const std::nothrow_t&) noexcept {
++    ::operator delete(p);
++}
++void operator delete(void* p, std::align_val_t) noexcept {
++    ::operator delete(p);
++}
++void operator delete[](void* p, std::align_val_t) noexcept {
++    ::operator delete(p);
++}
++void operator delete(void* p, std::size_t, std::align_val_t) noexcept {
++    ::operator delete(p);
++}
++void operator delete[](void* p, std::size_t, std::align_val_t) noexcept {
++    ::operator delete(p);
++}
++void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept {
++    ::operator delete(p);
++}
++void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept {
++    ::operator delete(p);
++}
++
++namespace frdisk {
++static const char kBuild[24] = __DATE__ " " __TIME__;   // a state only loads into the build that wrote it
++static const uint32_t kVersion = 1;
++
++struct OvlEntry {
++    std::unique_ptr<uint8_t[]> SaveStateInfo::*member;
++    void (*fn)(SaveStateCtx*);
++};
++static const OvlEntry kOvl[] = {
++    { &SaveStateInfo::matrixState, Matrix_SaveState },
++    { &SaveStateInfo::lightsState, Lights_SaveState },
++    { &SaveStateInfo::doorWarp1State, DoorWarp1_SaveState },
++    { &SaveStateInfo::mapMarkState, MapMark_SaveState },
++    { &SaveStateInfo::cameraState, Camera_SaveState },
++    { &SaveStateInfo::onePointCutsceneState, OnePointCutscene_SaveState },
++    { &SaveStateInfo::environmentState, Environment_SaveState },
++    { &SaveStateInfo::mapExpState, MapExp_SaveState },
++    { &SaveStateInfo::audioOcarinaState, AudioOcarina_SaveState },
++    { &SaveStateInfo::messagePalState, MessagePAL_SaveState },
++    { &SaveStateInfo::bgDdanKdState, BgDdanKd_SaveState },
++    { &SaveStateInfo::bgDodoagoState, BgDodoago_SaveState },
++    { &SaveStateInfo::bgHakaTrapState, BgHakaTrap_SaveState },
++    { &SaveStateInfo::bgHidanRockState, BgHidanRock_SaveState },
++    { &SaveStateInfo::bgMenkuriEyeState, BgMenkuriEye_SaveState },
++    { &SaveStateInfo::bgMoriHineriState, BgMoriHineri_SaveState },
++    { &SaveStateInfo::bgPoEventState, BgPoEvent_SaveState },
++    { &SaveStateInfo::bgRelayObjectsState, BgRelayObjects_SaveState },
++    { &SaveStateInfo::bgSpot18BasketState, BgSpot18Basket_SaveState },
++    { &SaveStateInfo::bossGanonState, BossGanon_SaveState },
++    { &SaveStateInfo::bossGanon2State, BossGanon2_SaveState },
++    { &SaveStateInfo::bossMoState, BossMo_SaveState },
++    { &SaveStateInfo::bossSstState, BossSst_SaveState },
++    { &SaveStateInfo::bossTwState, BossTw_SaveState },
++    { &SaveStateInfo::bossVaState, BossVa_SaveState },
++    { &SaveStateInfo::demo6kState, Demo6k_SaveState },
++    { &SaveStateInfo::demoDuState, DemoDu_SaveState },
++    { &SaveStateInfo::demoKekkaiState, DemoKekkai_SaveState },
++    { &SaveStateInfo::enBwState, EnBw_SaveState },
++    { &SaveStateInfo::enClearTagState, EnClearTag_SaveState },
++    { &SaveStateInfo::enFrState, EnFr_SaveState },
++    { &SaveStateInfo::enGomaState, EnGoma_SaveState },
++    { &SaveStateInfo::enInsectState, EnInsect_SaveState },
++    { &SaveStateInfo::enIshiState, EnIshi_SaveState },
++    { &SaveStateInfo::enNiwState, EnNiw_SaveState },
++    { &SaveStateInfo::enPoFieldState, EnPoField_SaveState },
++    { &SaveStateInfo::enTakaraManState, EnTakaraMan_SaveState },
++    { &SaveStateInfo::enXcState, EnXc_SaveState },
++    { &SaveStateInfo::enZfState, EnZf_SaveState },
++    { &SaveStateInfo::enZl3State, EnZl3_SaveState },
++    { &SaveStateInfo::objectKankyoState, ObjectKankyo_SaveState },
++    { &SaveStateInfo::enHeishi1State, EnHeishi1_SaveState },
++    { &SaveStateInfo::playerState, Player_SaveState },
++};
++static const uint32_t kOvlCount = sizeof(kOvl) / sizeof(kOvl[0]);
++
++struct Header {
++    char magic[4];
++    uint32_t version;
++    char build[24];
++    uint32_t sysHeap, audioHeap, infoSize, sizeA, sizeB, nOverlays, nPaths, nFixups;
++};
++struct Fixup {
++    uint32_t region, offset, path, idx, delta;
++};
++
++static size_t Measure(void (*fn)(SaveStateCtx*)) {
++    SaveStateCtx ctx = {};
++    ctx.mode = SHIP_SAVESTATE_MEASURE;
++    fn(&ctx);
++    return ctx.offset;
++}
++
++// The plain-data parts of SaveStateInfo: everything before the first unique_ptr and after the last
++static void Regions(SaveStateInfo* info, uint8_t*& a, size_t& la, uint8_t*& b, size_t& lb) {
++    uint8_t* base = reinterpret_cast<uint8_t*>(info);
++    a = base;
++    la = reinterpret_cast<uint8_t*>(&info->matrixState) - base;
++    b = reinterpret_cast<uint8_t*>(&info->transitionActorCount_copy);
++    lb = sizeof(SaveStateInfo) - (size_t)(b - base);
++}
++
++static std::string Dir() {
++    return Ship::Context::GetPathRelativeToAppDirectory("states");
++}
++static std::string FileFor(unsigned slot) {
++    return Dir() + "/slot" + std::to_string(slot) + ".frstate";
++}
++
++// Zero runs dominate the heaps: [nonzero word count][words][zero word count]...
++static void Encode(const std::vector<uint8_t>& in, std::vector<uint8_t>& out) {
++    const size_t words = in.size() / 4;
++    const uint32_t* w = reinterpret_cast<const uint32_t*>(in.data());
++    out.clear();
++    auto put = [&](uint32_t v) { out.insert(out.end(), (uint8_t*)&v, (uint8_t*)&v + 4); };
++    size_t i = 0;
++    while (i < words) {
++        size_t s = i;
++        while (i < words && w[i] != 0) i++;
++        put((uint32_t)(i - s));
++        out.insert(out.end(), (const uint8_t*)(w + s), (const uint8_t*)(w + i));
++        s = i;
++        while (i < words && w[i] == 0) i++;
++        put((uint32_t)(i - s));
++    }
++}
++static bool Decode(const uint8_t* in, size_t len, std::vector<uint8_t>& out, size_t rawSize) {
++    out.assign(rawSize, 0);
++    size_t pos = 0, o = 0;
++    while (pos + 4 <= len) {
++        uint32_t nz;
++        memcpy(&nz, in + pos, 4);
++        pos += 4;
++        if (pos + (size_t)nz * 4 > len || o + (size_t)nz * 4 > rawSize) return false;
++        memcpy(out.data() + o, in + pos, (size_t)nz * 4);
++        pos += (size_t)nz * 4;
++        o += (size_t)nz * 4;
++        if (pos + 4 > len) break;
++        uint32_t z;
++        memcpy(&z, in + pos, 4);
++        pos += 4;
++        o += (size_t)z * 4;
++        if (o > rawSize) return false;
++    }
++    return true;
++}
++
++static void Scan(const uint8_t* buf, size_t len, uint32_t region, const std::vector<frtrack::Range>& reg,
++                 std::vector<Fixup>& out) {
++    if (reg.empty()) return;
++    const uintptr_t lo = reg.front().base, hi = reg.back().end;
++    for (size_t o = 0; o + 4 <= len; o += 4) {
++        uint32_t v;
++        memcpy(&v, buf + o, 4);
++        if (v < lo || v >= hi) continue;
++        auto it = std::upper_bound(reg.begin(), reg.end(), (uintptr_t)v,
++                                   [](uintptr_t x, const frtrack::Range& r) { return x < r.base; });
++        if (it == reg.begin()) continue;
++        --it;
++        if (v >= it->end) continue;
++        out.push_back({ region, (uint32_t)o, it->path, it->idx, (uint32_t)(v - it->base) });
++    }
++}
++
++static bool Write(unsigned slot, SaveStateInfo* info, const std::vector<frtrack::Range>& reg) {
++    uint8_t *a, *b;
++    size_t la, lb;
++    Regions(info, a, la, b, lb);
++    std::vector<size_t> ovlSize(kOvlCount);
++    std::vector<Fixup> fix;
++    Scan(a, la, 0, reg, fix);
++    Scan(b, lb, 1, reg, fix);
++    for (uint32_t i = 0; i < kOvlCount; i++) {
++        ovlSize[i] = Measure(kOvl[i].fn);
++        if ((info->*kOvl[i].member) != nullptr) Scan((info->*kOvl[i].member).get(), ovlSize[i], 2 + i, reg, fix);
++    }
++    // the asset paths the fixups name, renumbered from 0
++    std::map<uint32_t, uint32_t> remap;
++    std::vector<std::string> paths;
++    for (auto& f : fix) {
++        auto it = remap.find(f.path);
++        if (it == remap.end()) {
++            it = remap.emplace(f.path, (uint32_t)paths.size()).first;
++            paths.push_back(frtrack::PathOf(f.path));
++        }
++        f.path = it->second;
++    }
++
++    std::vector<uint8_t> raw;
++    auto put = [&](const void* p, size_t n) { raw.insert(raw.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
++    Header h = {};
++    memcpy(h.magic, "FRS1", 4);
++    h.version = kVersion;
++    memcpy(h.build, kBuild, sizeof(h.build));
++    h.sysHeap = (uint32_t)(uintptr_t)gSystemHeap;
++    h.audioHeap = (uint32_t)(uintptr_t)gAudioHeap;
++    h.infoSize = sizeof(SaveStateInfo);
++    h.sizeA = (uint32_t)la;
++    h.sizeB = (uint32_t)lb;
++    h.nOverlays = kOvlCount;
++    h.nPaths = (uint32_t)paths.size();
++    h.nFixups = (uint32_t)fix.size();
++    put(&h, sizeof(h));
++    for (auto& p : paths) put(p.c_str(), p.size() + 1);
++    while (raw.size() % 4) raw.push_back(0);
++    put(fix.data(), fix.size() * sizeof(Fixup));
++    put(a, la);
++    while (raw.size() % 4) raw.push_back(0);
++    put(b, lb);
++    while (raw.size() % 4) raw.push_back(0);
++    for (uint32_t i = 0; i < kOvlCount; i++) {
++        uint32_t n = (info->*kOvl[i].member) != nullptr ? (uint32_t)ovlSize[i] : 0;
++        put(&n, 4);
++        if (n) put((info->*kOvl[i].member).get(), n);
++        while (raw.size() % 4) raw.push_back(0);
++    }
++
++    std::vector<uint8_t> enc;
++    Encode(raw, enc);
++    std::error_code ec;
++    std::filesystem::create_directories(Dir(), ec);
++    const std::string file = FileFor(slot), tmp = file + ".tmp";
++    FILE* f = fopen(tmp.c_str(), "wb");
++    if (f == nullptr) return false;
++    uint32_t rawSize = (uint32_t)raw.size();
++    bool ok = fwrite("FRSZ", 1, 4, f) == 4 && fwrite(&rawSize, 4, 1, f) == 1 &&
++              fwrite(enc.data(), 1, enc.size(), f) == enc.size();
++    ok = (fflush(f) == 0) && ok;
++    fsync(fileno(f));
++    fclose(f);
++    if (!ok || rename(tmp.c_str(), file.c_str()) != 0) {
++        remove(tmp.c_str());
++        return false;
++    }
++    SPDLOG_INFO("[FakeR36S] state {} written to the card: {} pointers into {} assets, {} KB", slot, fix.size(),
++                paths.size(), (enc.size() + 8) / 1024);
++    return true;
++}
++
++// Reads slot's file into a new SaveState, assets reloaded and their pointers rebuilt; nullptr if it can't
++static std::shared_ptr<SaveState> Read(unsigned slot) {
++    FILE* f = fopen(FileFor(slot).c_str(), "rb");
++    if (f == nullptr) return nullptr;
++    std::vector<uint8_t> file;
++    uint8_t chunk[65536];
++    size_t n;
++    while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0) file.insert(file.end(), chunk, chunk + n);
++    fclose(f);
++    if (file.size() < 8 || memcmp(file.data(), "FRSZ", 4) != 0) return nullptr;
++    uint32_t rawSize;
++    memcpy(&rawSize, file.data() + 4, 4);
++    std::vector<uint8_t> raw;
++    if (!Decode(file.data() + 8, file.size() - 8, raw, rawSize)) return nullptr;
++
++    size_t pos = 0;
++    auto need = [&](size_t k) { return pos + k <= raw.size(); };
++    if (!need(sizeof(Header))) return nullptr;
++    Header h;
++    memcpy(&h, raw.data(), sizeof(h));
++    pos += sizeof(h);
++    if (memcmp(h.magic, "FRS1", 4) != 0 || h.version != kVersion) return nullptr;
++    if (memcmp(h.build, kBuild, sizeof(h.build)) != 0) {
++        SPDLOG_WARN("[FakeR36S] state {} is from another build of the game: not loading it", slot);
++        return nullptr;
++    }
++    if (!gFrFixedHeaps || h.sysHeap != (uint32_t)(uintptr_t)gSystemHeap ||
++        h.audioHeap != (uint32_t)(uintptr_t)gAudioHeap || h.infoSize != sizeof(SaveStateInfo) ||
++        h.nOverlays != kOvlCount) {
++        SPDLOG_WARN("[FakeR36S] state {} doesn't match this run's memory layout: not loading it", slot);
++        return nullptr;
++    }
++    std::vector<std::string> paths;
++    for (uint32_t i = 0; i < h.nPaths; i++) {
++        size_t e = pos;
++        while (e < raw.size() && raw[e] != 0) e++;
++        if (e >= raw.size()) return nullptr;
++        paths.emplace_back((const char*)raw.data() + pos, e - pos);
++        pos = e + 1;
++    }
++    pos = (pos + 3) & ~(size_t)3;
++    if (!need((size_t)h.nFixups * sizeof(Fixup))) return nullptr;
++    std::vector<Fixup> fix(h.nFixups);
++    memcpy(fix.data(), raw.data() + pos, fix.size() * sizeof(Fixup));
++    pos += fix.size() * sizeof(Fixup);
++
++    auto st = std::make_shared<SaveState>(OTRGlobals::Instance->gSaveStateMgr, slot);
++    SaveStateInfo* info = st->info.get();
++    uint8_t *a, *b;
++    size_t la, lb;
++    Regions(info, a, la, b, lb);
++    if (la != h.sizeA || lb != h.sizeB || !need(la)) return nullptr;
++    memcpy(a, raw.data() + pos, la);
++    pos = (pos + la + 3) & ~(size_t)3;
++    if (!need(lb)) return nullptr;
++    memcpy(b, raw.data() + pos, lb);
++    pos = (pos + lb + 3) & ~(size_t)3;
++    for (uint32_t i = 0; i < kOvlCount; i++) {
++        if (!need(4)) return nullptr;
++        uint32_t len;
++        memcpy(&len, raw.data() + pos, 4);
++        pos += 4;
++        if (len) {
++            if (!need(len)) return nullptr;
++            (info->*kOvl[i].member) = std::make_unique<uint8_t[]>(len);
++            memcpy((info->*kOvl[i].member).get(), raw.data() + pos, len);
++        }
++        pos = (pos + len + 3) & ~(size_t)3;
++    }
++
++    // load every asset the state points into (kept alive with the state), then rebuild the pointers
++    auto rm = Ship::Context::GetRawInstance()->GetResourceManager();
++    for (auto& p : paths) {
++        auto res = rm->LoadResource(p, true);
++        if (res == nullptr) {
++            SPDLOG_WARN("[FakeR36S] state {} needs asset {}, which didn't load", slot, p);
++            return nullptr;
++        }
++        st->frKeep.push_back(res);
++    }
++    for (auto& x : fix) {
++        uintptr_t base;
++        if (x.path >= paths.size() || !frtrack::Lookup(paths[x.path], x.idx, base)) {
++            SPDLOG_WARN("[FakeR36S] state {}: block {} of {} is missing", slot, x.idx,
++                        x.path < paths.size() ? paths[x.path] : std::string("?"));
++            return nullptr;
++        }
++        uint8_t* buf;
++        size_t blen;
++        if (x.region == 0) {
++            buf = a;
++            blen = la;
++        } else if (x.region == 1) {
++            buf = b;
++            blen = lb;
++        } else if (x.region - 2 < kOvlCount && (info->*kOvl[x.region - 2].member) != nullptr) {
++            buf = (info->*kOvl[x.region - 2].member).get();
++            blen = Measure(kOvl[x.region - 2].fn);
++        } else {
++            return nullptr;
++        }
++        if ((size_t)x.offset + 4 > blen) return nullptr;
++        uint32_t v = (uint32_t)(base + x.delta);
++        memcpy(buf + x.offset, &v, 4);
++    }
++    SPDLOG_INFO("[FakeR36S] state {} read from the card: {} pointers rebuilt in {} assets", slot, fix.size(),
++                paths.size());
++    return st;
++}
++
++// One background writer, so the game never waits on the SD card
++struct Job {
++    unsigned slot;
++    std::shared_ptr<SaveState> st;
++    std::vector<frtrack::Range> reg;
++};
++static std::mutex jMu;
++static std::condition_variable jCv;
++static std::deque<Job> jobs;
++static bool workerUp = false;
++static std::atomic<int> pending{ 0 };
++
++static void Worker() {
++    for (;;) {
++        Job job;
++        {
++            std::unique_lock<std::mutex> lock(jMu);
++            jCv.wait(lock, [] { return !jobs.empty(); });
++            job = std::move(jobs.front());
++            jobs.pop_front();
++        }
++        if (!Write(job.slot, job.st->info.get(), job.reg)) SPDLOG_ERROR("[FakeR36S] could not write state {}", job.slot);
++        job.st.reset();
++        pending.fetch_sub(1);
++    }
++}
++
++static void Enqueue(unsigned slot, std::shared_ptr<SaveState> st) {
++    if (!gFrFixedHeaps || st == nullptr) return;
++    Job job{ slot, std::move(st), frtrack::Snapshot() };   // the registry as it is now, with the state
++    std::lock_guard<std::mutex> lock(jMu);
++    // a newer copy of the same slot replaces one still waiting
++    for (auto it = jobs.begin(); it != jobs.end(); ++it) {
++        if (it->slot == slot) {
++            *it = std::move(job);
++            jCv.notify_one();
++            return;
++        }
++    }
++    jobs.push_back(std::move(job));
++    pending.fetch_add(1);
++    if (!workerUp) {
++        std::thread(Worker).detach();
++        workerUp = true;
++    }
++    jCv.notify_one();
++}
++
++static void WaitIdle(uint32_t ms) {
++    const uint32_t until = SDL_GetTicks() + ms;
++    while (pending.load() > 0 && SDL_GetTicks() < until) SDL_Delay(20);
++}
++} // namespace frdisk
++
+ extern "C" void ProcessSaveStateRequests(void) {
+     OTRGlobals::Instance->gSaveStateMgr->ProcessSaveStateRequests();
+ }
+@@ -363,17 +1009,117 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
      return this->currentSlot;
  }
  
@@ -44,6 +706,14 @@ index 7ff40625..8930431a 100644
 +        const bool quit = sel && SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_START);
 +        const bool fps = sel && SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_B);
 +        if (quit && !exitHeld) {
++            // keep the moment you quit: a fresh autosave, written to the card before the game closes
++            if (gPlayState != nullptr && CVarGetInteger(CVAR_CHEAT("SaveStatesEnabled"), 0) != 0) {
++                auto s = std::make_shared<SaveState>(OTRGlobals::Instance->gSaveStateMgr, FR_AUTOSAVE_SLOT);
++                s->Save();
++                states[FR_AUTOSAVE_SLOT] = s;
++                frdisk::Enqueue(FR_AUTOSAVE_SLOT, s);
++            }
++            frdisk::WaitIdle(8000);
 +            SDL_Event e = {};
 +            e.type = SDL_QUIT;
 +            SDL_PushEvent(&e);
@@ -91,11 +761,16 @@ index 7ff40625..8930431a 100644
 +
 +    const int every = CVarGetInteger(CVAR_CHEAT("SaveStatesAutosave"), 5);
 +    if (every > 0 && SDL_GetTicks() - lastAutosave >= (uint32_t)every * 1000u && requests.empty()) {
-+        if (!states.contains(FR_AUTOSAVE_SLOT)) {
-+            states[FR_AUTOSAVE_SLOT] = std::make_shared<SaveState>(OTRGlobals::Instance->gSaveStateMgr, FR_AUTOSAVE_SLOT);
-+        }
-+        states[FR_AUTOSAVE_SLOT]->Save();   // silent: no notification every 5 seconds
++        auto s = std::make_shared<SaveState>(OTRGlobals::Instance->gSaveStateMgr, FR_AUTOSAVE_SLOT);
++        s->Save();   // silent: no notification every 5 seconds
++        states[FR_AUTOSAVE_SLOT] = s;
 +        lastAutosave = SDL_GetTicks();
++        static uint32_t lastDisk = 0;
++        const int disk = CVarGetInteger(CVAR_CHEAT("SaveStatesDiskAutosave"), 30);   // seconds, 0 = never
++        if (disk > 0 && SDL_GetTicks() - lastDisk >= (uint32_t)disk * 1000u) {
++            frdisk::Enqueue(FR_AUTOSAVE_SLOT, s);
++            lastDisk = SDL_GetTicks();
++        }
 +    }
 +}
 +
@@ -104,6 +779,32 @@ index 7ff40625..8930431a 100644
      while (!this->requests.empty()) {
          const auto& request = this->requests.front();
  
+         switch (request.type) {
+             case RequestType::SAVE:
+-                if (!this->states.contains(request.slot)) {
+-                    this->states[request.slot] =
+-                        std::make_shared<SaveState>(OTRGlobals::Instance->gSaveStateMgr, request.slot);
+-                }
++                // a new object every time: the card writer may still be holding the previous one
++                this->states[request.slot] =
++                    std::make_shared<SaveState>(OTRGlobals::Instance->gSaveStateMgr, request.slot);
+                 this->states[request.slot]->Save();
++                if (CVarGetInteger(CVAR_CHEAT("SaveStatesToCard"), 1) != 0) {
++                    frdisk::Enqueue(request.slot, this->states[request.slot]);
++                }
+                 Ship::Context::GetRawInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
+                     1.0f, true, "saved state %u", request.slot);
+                 break;
+@@ -407,6 +1153,9 @@ SaveStateReturn SaveStateMgr::AddRequest(const SaveStateRequest request) {
+             requests.push(request);
+             return SaveStateReturn::SUCCESS;
+         case RequestType::LOAD:
++            if (!states.contains(request.slot)) {   // after a restart: from the card
++                if (auto fromCard = frdisk::Read(request.slot)) states[request.slot] = fromCard;
++            }
+             if (states.contains(request.slot)) {
+                 requests.push(request);
+                 return SaveStateReturn::SUCCESS;
 diff --git a/soh/soh/Enhancements/savestates.h b/soh/soh/Enhancements/savestates.h
 index 6cfa5992..cadf436c 100644
 --- a/soh/soh/Enhancements/savestates.h

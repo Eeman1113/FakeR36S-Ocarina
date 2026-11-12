@@ -49,9 +49,13 @@ reach, and the fixup count per state is logged to find out how often it would ma
 - After a restart: load your save file, then Select+X (autosave) or Select+L1 (slot) brings you back
   to the exact moment.
 
-## Milestones
+## Status
 
-1. Fixed-address heaps and a non-PIE `soh.elf`; check on the console that addresses repeat across runs.
-2. Asset tracking; log the fixup count and any untracked pointers of a real state.
-3. Disk format, save and load in the same run (round trip).
-4. Load after a restart; then the autosave to disk.
+All four parts are in the build (patches `soh/0005`, `soh/0006`, `lus/0003`, `-no-pie` in `build.sh`):
+
+1. Fixed-address heaps and a non-PIE `soh.elf`.
+2. Asset tracking (`FrTrack_Push`/`FrTrack_Pop` around every asset build, a global `operator new` that records blocks).
+3. The card format (`FRSZ` zero-run encoded; header, asset paths, fixups, the plain parts of the state, the 43 static-data buffers), written by a background thread.
+4. Reading a state after a restart: assets reloaded, pointers rebuilt, refused if the build or the memory layout differ.
+
+Not yet confirmed on the console. The game log (`HOME/logs/soh.log`) says how many pointers each written and read state had (`[FakeR36S] state ...`), which is the first thing to check if a loaded state misbehaves.

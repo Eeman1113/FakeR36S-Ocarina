@@ -1,0 +1,45 @@
+--- a/src/ship/resource/ResourceManager.cpp
++++ b/src/ship/resource/ResourceManager.cpp
+@@ -8,6 +8,26 @@
+ #include "ship/utils/Utils.h"
+ #include "ship/config/ConsoleVariable.h"
+ #include "ship/Context.h"
++
++// FakeR36S: lets the game record which memory each asset is built in (persistent save states).
++// Weak, so builds without the hook (2 Ship 2 Harkinian) link unchanged.
++extern "C" void FrTrack_Push(const char* path) __attribute__((weak));
++extern "C" void FrTrack_Pop(void) __attribute__((weak));
++namespace {
++struct FrTrackScope {
++    bool open;
++    explicit FrTrackScope(const std::string& path) : open(FrTrack_Push != nullptr) {
++        if (open) FrTrack_Push(path.c_str());
++    }
++    void Close() {
++        if (open && FrTrack_Pop != nullptr) FrTrack_Pop();
++        open = false;
++    }
++    ~FrTrackScope() {
++        Close();
++    }
++};
++} // namespace
+ 
+ namespace Ship {
+ 
+@@ -152,6 +172,7 @@
+     // Get the file from the OTR. It may be null when the resource exists only as a `.meta`
+     // alias (no real file at this path); fall through so the loader can resolve the alias,
+     // but only when a `.meta` for this path actually exists.
++    FrTrackScope frTrack(identifier.Path);
+     auto file = LoadFileProcess(identifier.Path);
+     if (file == nullptr && !mArchiveManager->HasFile(identifier.Path + ".meta")) {
+         SPDLOG_TRACE("Failed to load resource file at path {}", identifier.Path);
+@@ -161,6 +182,7 @@
+ 
+     // Transform the raw data into a resource
+     auto resource = GetResourceLoader()->LoadResource(identifier.Path, file, initData);
++    frTrack.Close();
+ 
+     // Another thread could have loaded the resource while we were processing, so we want to check before setting to
+     // the cache.
