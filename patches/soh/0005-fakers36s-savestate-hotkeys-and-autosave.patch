@@ -1,5 +1,5 @@
 diff --git a/soh/soh/Enhancements/savestates.cpp b/soh/soh/Enhancements/savestates.cpp
-index 7ff40625..3d08ec37 100644
+index 7ff40625..ed78f51c 100644
 --- a/soh/soh/Enhancements/savestates.cpp
 +++ b/soh/soh/Enhancements/savestates.cpp
 @@ -1,5 +1,22 @@
@@ -40,7 +40,7 @@ index 7ff40625..3d08ec37 100644
  
      void Save(void);
      void Load(void);
-@@ -349,6 +369,632 @@ void SaveState::LoadTransitionActors(void) {
+@@ -349,6 +369,641 @@ void SaveState::LoadTransitionActors(void) {
      }
  }
  
@@ -94,8 +94,8 @@ index 7ff40625..3d08ec37 100644
 +
 +// never destroyed: the tracker must outlive every static destructor that frees memory
 +static std::mutex& Mu() {
-+    static std::mutex m;
-+    return m;
++    static std::mutex* m = new (malloc(sizeof(std::mutex))) std::mutex();
++    return *m;
 +}
 +static BlockMap& Blocks() {
 +    static BlockMap* m = new (malloc(sizeof(BlockMap))) BlockMap();
@@ -622,20 +622,28 @@ index 7ff40625..3d08ec37 100644
 +    std::shared_ptr<SaveState> st;
 +    std::vector<frtrack::Range> reg;
 +};
-+static std::mutex jMu;
-+static std::condition_variable jCv;
-+static std::deque<Job> jobs;
-+static bool workerUp = false;
++// Never destroyed: the writer thread sleeps on jCv, and destroying a condition variable that a
++// thread is still waiting on (as static destructors would when the game quits) can hang the exit.
++struct Queue {
++    std::mutex mu;
++    std::condition_variable cv;
++    std::deque<Job> jobs;
++    bool workerUp = false;
++};
++static Queue& Q() {
++    static Queue* q = new Queue();
++    return *q;
++}
 +static std::atomic<int> pending{ 0 };
 +
 +static void Worker() {
 +    for (;;) {
 +        Job job;
 +        {
-+            std::unique_lock<std::mutex> lock(jMu);
-+            jCv.wait(lock, [] { return !jobs.empty(); });
-+            job = std::move(jobs.front());
-+            jobs.pop_front();
++            std::unique_lock<std::mutex> lock(Q().mu);
++            Q().cv.wait(lock, [] { return !Q().jobs.empty(); });
++            job = std::move(Q().jobs.front());
++            Q().jobs.pop_front();
 +        }
 +        if (!Write(job.slot, job.st->info.get(), job.reg)) SPDLOG_ERROR("[FakeR36S] could not write state {}", job.slot);
 +        job.st.reset();
@@ -646,22 +654,23 @@ index 7ff40625..3d08ec37 100644
 +static void Enqueue(unsigned slot, std::shared_ptr<SaveState> st) {
 +    if (!gFrFixedHeaps || st == nullptr) return;
 +    Job job{ slot, std::move(st), frtrack::Snapshot() };   // the registry as it is now, with the state
-+    std::lock_guard<std::mutex> lock(jMu);
++    Queue& q = Q();
++    std::lock_guard<std::mutex> lock(q.mu);
 +    // a newer copy of the same slot replaces one still waiting
-+    for (auto it = jobs.begin(); it != jobs.end(); ++it) {
++    for (auto it = q.jobs.begin(); it != q.jobs.end(); ++it) {
 +        if (it->slot == slot) {
 +            *it = std::move(job);
-+            jCv.notify_one();
++            q.cv.notify_one();
 +            return;
 +        }
 +    }
-+    jobs.push_back(std::move(job));
++    q.jobs.push_back(std::move(job));
 +    pending.fetch_add(1);
-+    if (!workerUp) {
++    if (!q.workerUp) {
 +        std::thread(Worker).detach();
-+        workerUp = true;
++        q.workerUp = true;
 +    }
-+    jCv.notify_one();
++    q.cv.notify_one();
 +}
 +
 +static void WaitIdle(uint32_t ms) {
@@ -673,7 +682,7 @@ index 7ff40625..3d08ec37 100644
  extern "C" void ProcessSaveStateRequests(void) {
      OTRGlobals::Instance->gSaveStateMgr->ProcessSaveStateRequests();
  }
-@@ -363,17 +1009,117 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
+@@ -363,17 +1018,117 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
      return this->currentSlot;
  }
  
@@ -795,7 +804,7 @@ index 7ff40625..3d08ec37 100644
                  Ship::Context::GetRawInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
                      1.0f, true, "saved state %u", request.slot);
                  break;
-@@ -407,6 +1153,9 @@ SaveStateReturn SaveStateMgr::AddRequest(const SaveStateRequest request) {
+@@ -407,6 +1162,9 @@ SaveStateReturn SaveStateMgr::AddRequest(const SaveStateRequest request) {
              requests.push(request);
              return SaveStateReturn::SUCCESS;
          case RequestType::LOAD:
