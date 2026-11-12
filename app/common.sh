@@ -76,6 +76,12 @@ rom_line() {
 # anywhere but apps and the hidden folders, zips in HOME itself and in any n64 folder; a zipped one is unpacked into
 # the data folder for the game, and removed once it is done
 find_rom() {
+    # fast path: HOME itself and the usual N64 folders, before searching the whole card (a full card of games
+    # takes many minutes to walk on the A23's SD card)
+    for _f in "$HOME"/*.[zZnNvV]64 "$HOME"/roms/n64/*.[zZnNvV]64 "$HOME"/n64/*.[zZnNvV]64; do
+        [ -f "$_f" ] || continue
+        _l=$(rom_line < "$_f") && { echo "$_l|$_f|"; return 0; }
+    done
     _r=$(find "$HOME" -maxdepth 5 \( -path "$HOME/.*" -o -path "$HOME/apps" \) -prune -o -type f \( -name '*.z64' -o \
             -name '*.Z64' -o -name '*.n64' -o -name '*.N64' -o -name '*.v64' -o -name '*.V64' \) -print 2>/dev/null |
         while IFS= read -r _f; do
