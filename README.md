@@ -24,7 +24,7 @@ On goodluckOS, use the original App Installer zip (`ShipOfHarkinian-*.zip`) as d
 | Select + R1 | Save state to the current slot |
 | Select + L1 | Load the current slot |
 | Select + Right / Left | Next / previous slot (0 to 5) |
-| Select + X | Go back to the autosave state (refreshed every 5 seconds of gameplay) |
+| Select + X | Go back to the autosave (refreshed every 5 seconds of gameplay). The first Select+X after a restart resumes where your last session ended |
 
 Save states are on by default and are **kept on the card**: Select+R1 writes the slot to `HOME/.config/soh/states/` in the background, the 5-second autosave is written to the card every 30 seconds and when you quit with Select+Start, and after a restart Select+L1 or Select+X reads them back (load your save file first, then press it). A state only loads into the same build of the game that wrote it, so after an update older states are refused rather than risking a crash. How it works: [docs/persistent-savestates.md](docs/persistent-savestates.md). The game's own **Autosave** and **Remember Save Location** are on too, as a second safety net. To keep a session paused without quitting, tap the power button: FakeR36S-OS freezes the game with the screen off and resumes it exactly where you were.
 

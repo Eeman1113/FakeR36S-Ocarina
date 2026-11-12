@@ -1,10 +1,11 @@
+diff --git a/src/ship/resource/ResourceManager.cpp b/src/ship/resource/ResourceManager.cpp
+index c62ee72..df66320 100644
 --- a/src/ship/resource/ResourceManager.cpp
 +++ b/src/ship/resource/ResourceManager.cpp
-@@ -8,6 +8,26 @@
- #include "ship/utils/Utils.h"
+@@ -9,6 +9,26 @@
  #include "ship/config/ConsoleVariable.h"
  #include "ship/Context.h"
-+
+ 
 +// FakeR36S: lets the game record which memory each asset is built in (persistent save states).
 +// Weak, so builds without the hook (2 Ship 2 Harkinian) link unchanged.
 +extern "C" void FrTrack_Push(const char* path) __attribute__((weak));
@@ -24,18 +25,22 @@
 +    }
 +};
 +} // namespace
- 
++
  namespace Ship {
  
-@@ -152,6 +172,7 @@
+ ResourceFilter::ResourceFilter(const std::list<std::string>& includeMasks, const std::list<std::string>& excludeMasks,
+@@ -152,8 +172,10 @@ std::shared_ptr<IResource> ResourceManager::LoadResourceProcess(const ResourceId
      // Get the file from the OTR. It may be null when the resource exists only as a `.meta`
      // alias (no real file at this path); fall through so the loader can resolve the alias,
      // but only when a `.meta` for this path actually exists.
 +    FrTrackScope frTrack(identifier.Path);
      auto file = LoadFileProcess(identifier.Path);
      if (file == nullptr && !mArchiveManager->HasFile(identifier.Path + ".meta")) {
++        frTrack.Close();   // a miss (an alt asset that isn't there) builds nothing: don't record the cache entry
          SPDLOG_TRACE("Failed to load resource file at path {}", identifier.Path);
-@@ -161,6 +182,7 @@
+         mResourceCache[identifier] = ResourceLoadError::NotFound;
+         return nullptr;
+@@ -161,6 +183,7 @@ std::shared_ptr<IResource> ResourceManager::LoadResourceProcess(const ResourceId
  
      // Transform the raw data into a resource
      auto resource = GetResourceLoader()->LoadResource(identifier.Path, file, initData);
