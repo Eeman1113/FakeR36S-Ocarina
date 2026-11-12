@@ -19,6 +19,8 @@ On goodluckOS, use the original App Installer zip (`ShipOfHarkinian-*.zip`) as d
 
 | Buttons | What it does |
 |---|---|
+| Select + Start | Quit the game (back to EmulationStation) |
+| Select + B | Show / hide the frame rate (stats window) |
 | Select + R1 | Save state to the current slot |
 | Select + L1 | Load the current slot |
 | Select + Right / Left | Next / previous slot (0 to 5) |

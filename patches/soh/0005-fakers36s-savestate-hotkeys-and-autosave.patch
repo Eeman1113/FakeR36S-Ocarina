@@ -1,5 +1,5 @@
 diff --git a/soh/soh/Enhancements/savestates.cpp b/soh/soh/Enhancements/savestates.cpp
-index 7ff40625..90d2d664 100644
+index 7ff40625..8930431a 100644
 --- a/soh/soh/Enhancements/savestates.cpp
 +++ b/soh/soh/Enhancements/savestates.cpp
 @@ -1,5 +1,8 @@
@@ -11,11 +11,11 @@ index 7ff40625..90d2d664 100644
  
  #include <spdlog/spdlog.h>
  #include <ship/Context.h>
-@@ -363,7 +366,68 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
+@@ -363,7 +366,92 @@ unsigned int SaveStateMgr::GetCurrentSlot(void) {
      return this->currentSlot;
  }
  
-+// FakeR36S-Ocarina: save states from the handheld's buttons and a rolling autosave.
++// FakeR36S-Ocarina: handheld hotkeys (quit, FPS, save states) and a rolling autosave.
 +//   Select + R1          save to the current slot      Select + L1          load the current slot
 +//   Select + Right/Left  next / previous slot          Select + X           load the autosave
 +// The autosave slot is refreshed every 5 seconds of gameplay (SaveStatesAutosave, seconds, 0 = off).
@@ -34,6 +34,30 @@ index 7ff40625..90d2d664 100644
 +void SaveStateMgr::FakeR36SFrame(void) {
 +    static uint32_t held = 0;          // buttons down last frame, for edge detection
 +    static uint32_t lastAutosave = 0;  // SDL ticks
++    static bool exitHeld = false, fpsHeld = false;
++
++    // Everywhere (title screen included), like RetroArch's hotkeys on FakeR36S-OS:
++    //   Select + Start  quit the game cleanly (back to EmulationStation)
++    //   Select + B      show / hide the stats window with the frame rate
++    if (SDL_GameController* p = FR_Pad()) {
++        const bool sel = SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_BACK);
++        const bool quit = sel && SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_START);
++        const bool fps = sel && SDL_GameControllerGetButton(p, SDL_CONTROLLER_BUTTON_B);
++        if (quit && !exitHeld) {
++            SDL_Event e = {};
++            e.type = SDL_QUIT;
++            SDL_PushEvent(&e);
++        }
++        if (fps && !fpsHeld) {
++            auto stats = Ship::Context::GetRawInstance()->GetWindow()->GetGui()->GetGuiWindow("Stats");
++            if (stats != nullptr) {
++                if (stats->IsVisible()) stats->Hide(); else stats->Show();
++            }
++        }
++        exitHeld = quit;
++        fpsHeld = fps;
++    }
++
 +    if (CVarGetInteger(CVAR_CHEAT("SaveStatesEnabled"), 0) == 0 || gPlayState == nullptr) {
 +        held = 0;
 +        return;
